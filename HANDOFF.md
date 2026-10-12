@@ -73,11 +73,11 @@
 |---|---|---|
 | 设置窗口丢在屏幕正中，离桌宠太远；要「靠近桌宠的右上方」 | 新增纯函数 `src/main/place.js`，`settings-window.js` 用它摆位置 | `npm run test:place`（33 项） |
 | 桌宠右上角按钮不显眼、找不到 | 按钮 26→30px、不透明度 .38→.95、加白色描边、图标上色、启动「呼吸」三下 | `npm run test:exit` + 人工看图 |
-| 打字时桌宠抢焦点 | 桌宠窗口 `focusable: false` + 所有显示改走 `showInactive()` | `npm run test:focus`（17 项） |
+| 打字时桌宠抢焦点 | 桌宠窗口 `focusable: false` + 所有显示改走 `showInactive()` | `npm run test:focus`（20 项） |
 
 改完跑的**全套回归**（全绿）：
 `test:schedules` 46 · `test:scheduler` 39 · `test:reminder` 14 · `test:place` 37 ·
-`test:exit` 6 · `test:gaze` 6 · `test:drag` 通过 · `test:focus` 17 ·
+`test:exit` 6 · `test:gaze` 6 · `test:drag` 通过 · `test:focus` 20 ·
 `test:reminder-e2e` 19 · `test:scheduler-e2e` 通过 · `test:settings-e2e` 44
 
 ### 真实目录结构（截至 2026-10-12，✅ = 已存在）
@@ -160,7 +160,7 @@ npm run test:reminder        # 气泡位置自检（阶段 2-3，14 项，纯数
 npm run test:reminder-e2e    # 提醒呈现端到端（19 项；⚠ 会真的弹一条系统通知）
 npm run test:place           # 窗口摆放位置自检（33 项，纯数学、秒出结果）
 npm run test:settings-e2e    # 日程管理窗口端到端（44 项；会真的开窗口、写一条日程再删掉）
-npm run test:focus           # 桌宠不抢焦点自检（17 项，见第六节第 26 条）
+npm run test:focus           # 桌宠不抢焦点自检（20 项，见第六节第 26 条）
 npm run test:gaze            # 拖拽时「视线跟随」开关自检（6 项，见第六节第 20 条）
 npm run test:exit            # 退出按钮自检（6 项，见第六节第 21 条）
 npm run test:drag            # 拖拽性能自检：搬窗口频率 / 帧间隔 / 跟踪误差
@@ -348,9 +348,14 @@ npm run make-tray-icon       # 换形象后重新生成托盘图标
       点按钮开设置窗口（`test:settings-e2e` 44/44）。
     - 连带变化：Alt+F4 再也够不到桌宠了 —— 这正是想要的
       （主人按 Alt+F4 应该关掉自己正在用的软件，而不是把桌宠关掉）。
-    - 回归哨兵：**`npm run test:focus`（17 项）**，里面有两组关键负对照：
+    - 回归哨兵：**`npm run test:focus`（20 项）**，里面有两组关键负对照：
       ③ 桌宠必须**真的显示着**（排除「因为没显示所以不抢焦点」的假通过）；
       ④ 设置窗口必须**还能**抢焦点（排除「把整个程序的焦点能力都关掉了」）。
+    - 另外单独验了**右键菜单**：③b 在角色身上合成一次右键，断言渲染进程的
+      `contextmenu` 收到 1 次；负对照是在空白处右键，必须收到 0 次。
+      （改 `focusable` 有掐断鼠标事件的风险，而这个功能坏了主人会直接发现。）
+      做法：`renderer.js` 里加了 `__petDebug.menu`（计数 + `suppress(true)` 时只计数、
+      不真弹原生菜单 —— 否则自检会被原生菜单卡住）。
     - ⚠ 诚实的边界：自检验的是「窗口配置对不对」。「真的不影响别的软件打字」
       是操作系统层的行为，自动化测不到，**只能人工试**。
 

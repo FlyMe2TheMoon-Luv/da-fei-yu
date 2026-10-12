@@ -756,6 +756,36 @@ async function runFocusSelfTest() {
     ` → focused=${win.isFocused()}`);
   ok(win.isVisible() === true, '点过之后桌宠还在（没被误关掉）');
 
+  // ===== ③b ★ 右键菜单还收不收得到事件 =====
+  // 改成 focusable:false 之后鼠标事件还通不通？左键那条链路刚才已经间接验过，
+  // 右键（弹原生菜单）单独再验一次 —— 这个功能坏了主人会直接发现。
+  log('③b ★ 负对照：右键菜单事件');
+  await win.webContents.executeJavaScript(
+    'window.__petDebug.menu.reset(); window.__petDebug.menu.suppress(true)');
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: 200, y: 190 });
+  await sleep(300);
+  const onPetPt = await win.webContents.executeJavaScript('window.__petDebug.hitTestPoint(200, 190)');
+  ok(onPetPt.overPet === true, `右键前先把鼠标压在角色身上（alpha=${onPetPt.alpha}）`);
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: 200, y: 190, button: 'right', clickCount: 1 });
+  await sleep(80);
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: 200, y: 190, button: 'right', clickCount: 1 });
+  await sleep(350);
+  const hitsOnPet = await win.webContents.executeJavaScript('window.__petDebug.menu.hits()');
+  ok(hitsOnPet >= 1, '★ 在角色身上右键：菜单事件确实送到了渲染进程（没被 focusable:false 掐断）',
+    ` → 收到 ${hitsOnPet} 次`);
+
+  // ★ 负对照：在空白处右键不该触发 —— 说明上面不是「无脑计数」
+  await win.webContents.executeJavaScript('window.__petDebug.menu.reset()');
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: 3, y: 3 });
+  await sleep(350);
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: 3, y: 3, button: 'right', clickCount: 1 });
+  await sleep(80);
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: 3, y: 3, button: 'right', clickCount: 1 });
+  await sleep(350);
+  const hitsEmpty = await win.webContents.executeJavaScript('window.__petDebug.menu.hits()');
+  ok(hitsEmpty === 0, '★ 负对照：在空白处右键不会弹菜单', ` → 收到 ${hitsEmpty} 次`);
+  await win.webContents.executeJavaScript('window.__petDebug.menu.suppress(false)');
+
   // ===== ④ ★ 负对照：主人主动打开的设置窗口，必须还能抢焦点 =====
   // 「不抢焦点」如果做过头（比如整个程序都关了），主人就没法在设置窗口里打字了。
   log('④ ★ 负对照：设置窗口必须还能拿焦点');

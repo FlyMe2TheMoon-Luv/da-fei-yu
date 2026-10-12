@@ -135,6 +135,8 @@ const REMINDER_MOTION = 'splash'; // 有大幅度肢体动作的，比 idle 里�
 const REMINDER_HOLD_MS = 4000;    // 表情保持 4 秒再收回
 
 let reminderHits = 0;             // 自检用：到底收到几次提醒（不是「我发了」，是「它收到了」）
+let menuHits = 0;                 // 自检用：右键菜单事件到底到了几次
+let suppressMenu = false;         // 自检用：置 true 时只计数、不真弹原生菜单（否则自检会挂住）
 let reminderRestoreTimer = null;
 
 function playReminderReaction(model) {
@@ -237,6 +239,12 @@ function setupReminder(model) {
       reminder: {
         hits: () => reminderHits,
         reset: () => { reminderHits = 0; },
+      },
+      // 自检用：右键菜单事件到底到了几次 + 临时别真弹原生菜单
+      menu: {
+        hits: () => menuHits,
+        reset: () => { menuHits = 0; },
+        suppress: (on) => { suppressMenu = !!on; },
       },
     };
 
@@ -603,6 +611,10 @@ function setupInteractions(app, model) {
   window.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     if (!overPet || overUi || !window.petAPI) return;
+    menuHits++;
+    // 自检会合成右键来验「改成 focusable:false 之后右键菜单还收不收得到事件」。
+    // 真弹原生菜单会把自检卡住，所以自检期间只计数。
+    if (suppressMenu) return;
     window.petAPI.showMenu();
   });
 
