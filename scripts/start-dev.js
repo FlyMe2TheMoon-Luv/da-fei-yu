@@ -18,9 +18,12 @@
 //   npm start -- <其他参数>    额外参数原样透传给 electron
 //
 // 开发自检（两个便利参数，由本脚本翻译成环境变量 / 启动参数）：
-//   npm start -- --no-gpu --selftest=gaze   拖拽时「视线跟随」开关自检
-//   npm start -- --no-gpu --selftest=drag   拖拽性能自检（搬窗口频率 / 帧间隔）
-//   npm start -- --no-gpu --selftest=1      原有的穿透 + 表情自检
+//   npm start -- --no-gpu --selftest=gaze      拖拽时「视线跟随」开关自检
+//   npm start -- --no-gpu --selftest=drag      拖拽性能自检（搬窗口频率 / 帧间隔）
+//   npm start -- --no-gpu --selftest=exit      退出按钮自检（含「控件能不能点到」）
+//   npm start -- --no-gpu --selftest=scheduler 调度引擎端到端（要等 30 秒轮询）
+//   npm start -- --no-gpu --selftest=reminder  提醒呈现自检（会真的弹一条系统通知）
+//   npm start -- --no-gpu --selftest=1         原有的穿透 + 表情自检
 //   --isolated  用独立的临时 user-data-dir
 //               —— 桌宠是单实例程序，已经开着一个时，再启动会被直接顶掉，
 //                  自检根本不会跑（很容易误判成「通过」），所以跑自检务必加上它。

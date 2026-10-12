@@ -12,13 +12,18 @@
 // 渲染进程自己判断不了「鼠标是不是压在角色身上」（那是像素级的事），
 // 所以判定在渲染进程做，setIgnoreMouseEvents 的执行在主进程做。
 
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, Notification } = require('electron');
 const path = require('path');
 const store = require('./store');
 const schedules = require('./schedules');
 const scheduler = require('./scheduler');
+const reminder = require('./reminder');
 
 const log = (m) => console.log('[main] ' + m);
+
+// Windows 上必须设这个，否则系统通知显示不出应用名（HANDOFF 第七节「这一步的坑」）。
+// 要在 app ready 之前调用。
+app.setAppUserModelId('com.desktop-pet.app');
 
 // ---------- 常量 ----------
 
@@ -155,6 +160,11 @@ function createWindow() {
   // 开发自检：调度引擎端到端（见 runSchedulerSelfTest）。要等 30 秒轮询，慢一点。
   if (!app.isPackaged && process.env.PET_SELFTEST === 'scheduler') {
     setTimeout(runSchedulerSelfTest, 1200);
+  }
+
+  // 开发自检：提醒呈现（见 runReminderSelfTest）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'reminder') {
+    setTimeout(runReminderSelfTest, 1200);
   }
 
   // 位置变化就记下来
@@ -354,7 +364,9 @@ async function checkExpressions() {
 
 // ---------- 日程提醒 ----------
 
-// 2-2 只做到「终端打印」——气泡、表情动作、系统通知是 2-3 的事。
+// 调度引擎（2-2）判定「到点了」，这里负责「怎么让主人知道」（2-3）。
+// 三招（桌宠表演 / 气泡 / 系统通知）都在 reminder.js 里，这里只做转交 + 记账。
+//
 // lastFired 是给自检看的：判断「到底响没响」，而不是靠肉眼看日志。
 const lastFired = [];
 
@@ -363,9 +375,17 @@ function fmtClock(d) {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
-function onScheduleDue(item, target) {
+async function onScheduleDue(item, target) {
   lastFired.push({ id: item.id, title: item.title, at: target });
   log(`该提醒了：${item.title}（日程 ${item.time}，实际到点 ${fmtClock(target)}）`);
+
+  // 呈现失败也绝不能把调度引擎带崩 —— 否则一条日程炸了，后面所有日程都不提醒了。
+  // （scheduler 的回调外面还有一层 try/catch，这里是第二道保险。）
+  try {
+    await reminder.present(item, target);
+  } catch (err) {
+    log('提醒呈现出错：' + (err && err.message ? err.message : String(err)));
+  }
 }
 
 // ---------- 开发自检：拖拽 ----------
@@ -402,8 +422,8 @@ async function waitForPet(timeoutMs = 25000) {
   return false;
 }
 
-function quitAfterDragTest() {
-  log('===== 拖拽自检结束 =====');
+function quitAfterSelfTest() {
+  log('===== 自检结束 =====');
   setTimeout(() => app.quit(), 300);
 }
 
@@ -436,8 +456,8 @@ async function runDragSelfTest() {
   const DY = 2;
 
   log('===== 拖拽自检开始 =====');
-  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
-  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪（模型没加载出来？）'); return quitAfterDragTest(); }
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪（模型没加载出来？）'); return quitAfterSelfTest(); }
   log(`渲染进程就绪 · 每轮 ${STEPS} 步 · 总位移 ${DX * STEPS}×${DY * STEPS}`);
 
   // ① 基线：窗口不动
@@ -503,7 +523,7 @@ async function runDragSelfTest() {
     await sleep(300);
   }
 
-  quitAfterDragTest();
+  quitAfterSelfTest();
 }
 
 // ---------- 开发自检：拖拽时的「视线跟随」开关 ----------
@@ -518,8 +538,8 @@ async function runDragSelfTest() {
 // 光看日志「我调了关闭函数」不算证据（HANDOFF 第六节第 19 条的教训：要能证伪）。
 async function runGazeSelfTest() {
   log('===== 视线跟随自检开始 =====');
-  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
-  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterDragTest(); }
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
 
   // 问库：autoInteract 标志 + 视线监听到底挂没挂
   const state = () => win.webContents.executeJavaScript(`(() => {
@@ -571,7 +591,7 @@ async function runGazeSelfTest() {
 
   log(`===== 视线跟随自检结束：${pass} 通过 / ${fail} 失败 =====`);
   log(fail === 0 ? '结论：拖拽时视线跟随能正确开关' : '结论：有失败项，拖拽时角色仍会抽动');
-  quitAfterDragTest();
+  quitAfterSelfTest();
 }
 
 // ---------- 开发自检：退出按钮 ----------
@@ -582,8 +602,8 @@ async function runGazeSelfTest() {
 //   ② 按钮的点击确实能触发退出（最后真点一下，程序该自己消失）。
 async function runExitButtonSelfTest() {
   log('===== 退出按钮自检开始 =====');
-  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
-  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterDragTest(); }
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
 
   let pass = 0;
   let fail = 0;
@@ -642,10 +662,10 @@ async function runExitButtonSelfTest() {
   finishExitTest(pass, fail + 1);
 }
 
-function finishExitTest(pass, fail) {
-  log(`===== 退出按钮自检结束：${pass} 通过 / ${fail} 失败 =====`);
-  log(fail === 0 ? '结论：退出按钮可用' : '结论：有失败项');
-  quitAfterDragTest();
+function finishExitTest(pass, fail, label = '退出按钮') {
+  log(`===== ${label}自检结束：${pass} 通过 / ${fail} 失败 =====`);
+  log(fail === 0 ? `结论：${label}可用` : `结论：${label}有失败项`);
+  quitAfterSelfTest();
 }
 
 // ---------- 开发自检：调度引擎（端到端） ----------
@@ -654,15 +674,15 @@ function finishExitTest(pass, fail) {
 // 对应 HANDOFF 第七节的验收标准：「设一个 2 分钟后的日程，终端打印『该提醒了：开会』」。
 async function runSchedulerSelfTest() {
   log('===== 调度引擎自检开始（端到端）=====');
-  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
-  if (!scheduler.isRunning()) { log('✗ 调度引擎没启动'); return quitAfterDragTest(); }
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!scheduler.isRunning()) { log('✗ 调度引擎没启动'); return quitAfterSelfTest(); }
 
   // 塞一条 20 秒后的日程（时间只到分钟，所以实际落点可能比 20 秒近一些，
   // 落在过去也没关系 —— 只要没超过 5 分钟宽限窗口，照样该响）
   const at = new Date(Date.now() + 20000);
   const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
   const added = schedules.add({ title: '自检·开会', time: hhmm, repeat: 'once', date: schedules.localDateKey(at) });
-  if (added.error) { log('✗ 塞日程失败：' + added.error); return quitAfterDragTest(); }
+  if (added.error) { log('✗ 塞日程失败：' + added.error); return quitAfterSelfTest(); }
 
   log(`已塞入日程「${added.title}」@ ${hhmm}（id=${added.id}）`);
   log(`轮询每 ${scheduler.TICK_MS / 1000} 秒一次，最多等 75 秒…`);
@@ -679,7 +699,7 @@ async function runSchedulerSelfTest() {
   if (!hit) {
     log(`✗ 等了 ${waited} 秒，调度引擎没把这条日程扫出来`);
     log('===== 调度引擎自检结束：失败 =====');
-    return quitAfterDragTest();
+    return quitAfterSelfTest();
   }
 
   log(`✓ 调度引擎自己扫到了它（等了 ${waited} 秒）`);
@@ -698,7 +718,143 @@ async function runSchedulerSelfTest() {
 
   const allGood = !reFired && reread && reread.lastFiredDate;
   log(`===== 调度引擎自检结束：${allGood ? '通过' : '失败'} =====`);
-  quitAfterDragTest();
+  quitAfterSelfTest();
+}
+
+// ---------- 开发自检：提醒呈现（阶段 2-3）----------
+// 单元测试（npm run test:reminder）验的是「气泡位置算得对不对」；
+// 这里验的是「整条链路真的通了」—— 提醒发下去之后，气泡**真的出现在屏幕上**、
+// 内容**真的画对了**、点「知道了」**真的能收起来**、没人理**真的会自己收**。
+//
+// 判定原则（HANDOFF 第六节第 19 条的教训）：
+//   光看到「我调了 present()、没报错」不算证据 —— 必须问气泡窗口自己的状态。
+//   所以下面全部通过 reminder.debugBubble() 去问网页的 DOM 和窗口的 isVisible()。
+//
+// ⚠ 负对照：「桌宠收进托盘时改用系统通知」这一段会真的把桌宠藏起来、真的弹一条
+//   系统通知。看到右下角冒通知是**预期行为**，不是 bug。
+async function runReminderSelfTest() {
+  log('===== 提醒呈现自检开始（阶段 2-3）=====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
+
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
+  };
+
+  reminder.clearHistory();
+  await win.webContents.executeJavaScript('window.__petDebug.reminder.reset()');
+
+  // ===== ① 正常路径：桌宠露着脸 =====
+  log('① 正常路径：桌宠露着脸，到点提醒');
+  const rec = await reminder.present({ title: '自检·喝水' }, new Date(), { autoHideMs: 0 });
+  ok(rec.reacted === true, '桌宠收到了提醒（会切表情 + 放动作）');
+  ok(rec.bubble === true, '★ 气泡窗口显示出来了');
+  ok(rec.notification === false, '桌宠露脸时不发系统通知（不该重复打扰）');
+
+  // 等网页把内容画上去
+  await sleep(400);
+
+  // ===== ② 气泡里到底画了什么（问网页本身，不问我们自己的变量）=====
+  log('② 气泡内容');
+  const b1 = await reminder.debugBubble();
+  ok(b1.exists === true && b1.visible === true, '★ 气泡窗口真的可见（不是只创建了对象）',
+    ` → exists=${b1.exists} visible=${b1.visible}`);
+  ok(!!(b1.dom && b1.dom.title === '自检·喝水'), '气泡上写的标题和日程一致',
+    ` → “${b1.dom && b1.dom.title}”`);
+  ok(!!(b1.dom && /^\d{2}:\d{2} 到点$/.test(b1.dom.time || '')), '气泡上显示了到点时间',
+    ` → “${b1.dom && b1.dom.time}”`);
+
+  // ===== ③ 气泡位置：贴着桌宠、不越出屏幕 =====
+  log('③ 气泡位置');
+  const petRect = win.getBounds();
+  const bb = b1.bounds;
+  if (!bb) {
+    ok(false, '拿不到气泡的位置');
+  } else {
+    // 竖直方向应该落在桌宠的高度范围内（贴着她头部）
+    const nearY = bb.y >= petRect.y - 40 && bb.y <= petRect.y + petRect.height;
+    ok(nearY, '气泡竖直方向贴着桌宠', ` → 气泡y=${bb.y} 桌宠 ${petRect.y}~${petRect.y + petRect.height}`);
+    // 水平方向：右边缘贴桌宠，或左边缘贴桌宠
+    const beside = Math.abs(bb.x - (petRect.x + petRect.width + reminder.BUBBLE_GAP)) <= 2 ||
+                   Math.abs(bb.x + bb.width - (petRect.x - reminder.BUBBLE_GAP)) <= 2 ||
+                   bb.x < petRect.x;
+    ok(beside, '气泡水平方向在桌宠旁边（右优先，放不下翻左边）',
+      ` → 气泡x=${bb.x} 桌宠x=${petRect.x} 宽=${petRect.width}`);
+    const wa = screen.getDisplayNearestPoint({ x: bb.x, y: bb.y }).workArea;
+    const inside = bb.x >= wa.x && bb.y >= wa.y &&
+                   bb.x + bb.width <= wa.x + wa.width && bb.y + bb.height <= wa.y + wa.height;
+    ok(inside, '★ 气泡完全落在屏幕工作区内（不会被裁掉）',
+      ` → 气泡 ${bb.x},${bb.y} ${bb.width}×${bb.height} · 工作区 ${wa.x},${wa.y} ${wa.width}×${wa.height}`);
+  }
+
+  // ===== ④ 桌宠本体确实收到了提醒（问渲染进程的计数，别信我们自己的日志）=====
+  log('④ 桌宠的反应');
+  const hits = await win.webContents.executeJavaScript('window.__petDebug.reminder.hits()');
+  ok(hits >= 1, '桌宠渲染进程确实收到了提醒事件', ` → 收到 ${hits} 次`);
+
+  // ===== ⑤ 点「知道了」能收起气泡 =====
+  log('⑤ 点「知道了」');
+  const bw = reminder.getBubbleWindow();
+  if (!bw) {
+    ok(false, '拿不到气泡窗口，没法测点击');
+  } else {
+    const btn = await bw.webContents.executeJavaScript(`(() => {
+      const b = document.getElementById('ok');
+      if (!b) return null;
+      const r = b.getBoundingClientRect();
+      const cx = Math.round(r.left + r.width / 2);
+      const cy = Math.round(r.top + r.height / 2);
+      const el = document.elementFromPoint(cx, cy);
+      return { cx, cy, topEl: el ? (el.id || el.tagName) : null };
+    })()`);
+    ok(!!btn, '气泡上有「知道了」按钮');
+    if (btn) {
+      ok(btn.topEl === 'ok', '按钮就在它自己的位置上、没被别的东西盖住', ` → 该点最顶层是 ${btn.topEl}`);
+      bw.webContents.sendInputEvent({ type: 'mouseMove', x: btn.cx, y: btn.cy });
+      await sleep(120);
+      bw.webContents.sendInputEvent({ type: 'mouseDown', x: btn.cx, y: btn.cy, button: 'left', clickCount: 1 });
+      await sleep(60);
+      bw.webContents.sendInputEvent({ type: 'mouseUp', x: btn.cx, y: btn.cy, button: 'left', clickCount: 1 });
+      await sleep(500);
+      ok(reminder.isShowing() === false, '★ 点「知道了」之后气泡收起来了',
+        ` → isShowing=${reminder.isShowing()}`);
+    }
+  }
+
+  // ===== ⑥ 自动收起：该收的收、不该收的不收 =====
+  log('⑥ 自动收起（正例 + 负对照）');
+  await reminder.present({ title: '自检·限时' }, new Date(), { autoHideMs: 900 });
+  await sleep(400);
+  ok(reminder.isShowing() === true, '刚弹出时气泡是显示的', ` → isShowing=${reminder.isShowing()}`);
+  await sleep(1200);
+  ok(reminder.isShowing() === false, '★ 倒计时走完（0.9 秒）气泡自己收了');
+
+  await reminder.present({ title: '自检·不限时' }, new Date(), { autoHideMs: 0 });
+  await sleep(1600);
+  ok(reminder.isShowing() === true, '★ 负对照：autoHideMs=0 时不会误收（说明上面不是「到点就无脑收」）',
+    ` → isShowing=${reminder.isShowing()}`);
+  reminder.hideBubble('自检收尾');
+
+  // ===== ⑦ 负对照：桌宠看不见时，不该冒气泡，要改用系统通知 =====
+  log('⑦ 负对照：把桌宠收进托盘（看不见）再提醒一次');
+  win.hide();
+  await sleep(350);
+  const rec2 = await reminder.present({ title: '自检·藏起来时' }, new Date(), { autoHideMs: 0 });
+  ok(rec2.bubble === false, '★ 桌宠看不见时：不冒气泡（气泡会飘在空处，没意义）');
+  ok(rec2.notification === Notification.isSupported(),
+    '★ 桌宠看不见时：改用系统通知兜底（不该被静默吞掉）',
+    ` → 系统支持通知=${Notification.isSupported()} 实际发出=${rec2.notification}`);
+  win.show();
+  await sleep(350);
+
+  // ===== ⑧ 收尾：别把气泡留在屏幕上 =====
+  reminder.hideBubble('自检收尾');
+  ok(reminder.isShowing() === false, '自检结束后气泡已收起（不留残留窗口）');
+
+  finishExitTest(pass, fail, '提醒呈现');
 }
 
 // ---------- 生命周期 ----------
@@ -713,6 +869,10 @@ if (!gotLock) {
   app.whenReady().then(() => {
     createWindow();
     createTray();
+
+    // 阶段 2-3：提醒呈现。气泡窗口 + 桌宠表演 + 系统通知兜底都在这里面，
+    // 这里只把「桌宠窗口在哪」告诉它（它自己拿不到）。
+    reminder.init({ getPetWindow: () => win });
 
     // 阶段 2-2：日程调度引擎。每 30 秒扫一遍，到点回调（启动时也会立刻扫一次，
     // 把「开机前 5 分钟内刚错过」的那条补上）。
@@ -735,6 +895,7 @@ app.on('before-quit', () => {
   quitting = true;
   log('收到退出指令，正在退出');
   scheduler.stop();
+  reminder.hideBubble('程序退出');
   savePosition();
 });
 

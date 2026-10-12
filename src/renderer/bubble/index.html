@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 气泡窗口只显示本地内容，不需要 eval，CSP 收紧到最小 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+  <title>日程提醒</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: transparent;   /* 窗口透明，圆角靠卡片自己画 */
+      overflow: hidden;
+      font-family: "Microsoft YaHei", system-ui, sans-serif;
+      user-select: none;
+      cursor: default;
+    }
+
+    #card {
+      position: absolute;
+      inset: 0;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 11px 14px 13px;
+      background: rgba(255, 255, 255, .97);
+      border: 1px solid rgba(0, 0, 0, .07);
+      border-radius: 14px;
+      box-shadow: 0 6px 22px rgba(0, 0, 0, .18);
+      overflow: hidden;
+      animation: pop .18s ease-out;
+    }
+    @keyframes pop {
+      from { transform: translateY(7px) scale(.96); opacity: 0 }
+      to   { transform: none; opacity: 1 }
+    }
+
+    #head {
+      font-size: 11px;
+      color: #9ca3af;
+      letter-spacing: .6px;
+    }
+    #title {
+      margin-top: 3px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    #foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+    }
+    #time {
+      font-size: 12px;
+      color: #6b7280;
+      font-variant-numeric: tabular-nums;
+    }
+    #ok {
+      border: none;
+      border-radius: 8px;
+      padding: 6px 15px;
+      font-size: 13px;
+      font-family: inherit;
+      background: #3b82f6;
+      color: #fff;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    #ok:hover { background: #2563eb; }
+    #ok:active { transform: translateY(1px); }
+
+    /* 底部倒计时条：走完就自动消失，让主人知道还剩多久 */
+    #bar {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      height: 2px;
+      width: 100%;
+      background: #3b82f6;
+      opacity: .45;
+      transform-origin: left center;
+    }
+  </style>
+</head>
+<body>
+  <div id="card">
+    <div>
+      <div id="head">日程提醒</div>
+      <div id="title">—</div>
+    </div>
+    <div id="foot">
+      <span id="time"></span>
+      <button id="ok">知道了</button>
+    </div>
+    <div id="bar"></div>
+  </div>
+  <script src="./bubble.js"></script>
+</body>
+</html>

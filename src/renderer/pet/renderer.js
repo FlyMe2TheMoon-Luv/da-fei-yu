@@ -96,6 +96,57 @@ function setupExitButton() {
   });
 }
 
+// ---------- 日程提醒：角色的「表演」 ----------
+// 日程到点时主进程会推一个事件过来，让角色动一下。
+//
+// 为什么光有气泡不够：气泡是安静的，主人正埋头干活时很容易错过；
+// 角色突然换个表情、放个有明显动作的姿势，眼角余光就能扫到 —— 这是桌宠提醒的天然优势。
+//
+// 两个细节：
+//   ① 表演期间把视线跟随摘掉。不然放动作时头还在追鼠标，看着很精神分裂。
+//      和拖拽用的是同一招（见 setupInteractions 里的 setGazeFollowing 注释）。
+//   ② 表演完必须恢复，否则「招牌动作」就永久丢了。
+const REMINDER_EXPRESSION = '星星眼';
+const REMINDER_MOTION = 'splash'; // 有大幅度肢体动作的，比 idle 里的小动作显眼
+const REMINDER_HOLD_MS = 4000;    // 表情保持 4 秒再收回
+
+let reminderHits = 0;             // 自检用：到底收到几次提醒（不是「我发了」，是「它收到了」）
+let reminderRestoreTimer = null;
+
+function playReminderReaction(model) {
+  reminderHits++;
+
+  try {
+    model.autoInteract = false;
+    model.unregisterInteraction();
+  } catch { /* 库内部结构变了也不能让提醒崩掉 */ }
+
+  try { model.expression(REMINDER_EXPRESSION).catch(() => {}); } catch { /* 忽略 */ }
+  try { model.motion(REMINDER_MOTION).catch(() => {}); } catch { /* 动作组不存在就只留表情 */ }
+
+  log(`日程提醒 → 表演「${REMINDER_EXPRESSION}」+ 动作「${REMINDER_MOTION}」`);
+
+  clearTimeout(reminderRestoreTimer);
+  reminderRestoreTimer = setTimeout(() => {
+    // 恢复视线跟随：把 autoInteract 设回 true，下一帧库会自己把监听挂回去
+    try { model.autoInteract = true; } catch { /* 忽略 */ }
+    try {
+      const em = model.internalModel.motionManager.expressionManager;
+      if (em && typeof em.resetExpression === 'function') em.resetExpression();
+    } catch { /* 忽略 */ }
+    log('提醒表演结束，恢复常态');
+  }, REMINDER_HOLD_MS);
+}
+
+// 接主进程推来的提醒事件
+function setupReminder(model) {
+  if (!window.petAPI || !window.petAPI.onReminder) return;
+  window.petAPI.onReminder((payload) => {
+    log(`收到提醒：${payload && payload.title}（${payload && payload.time}）`);
+    playReminderReaction(model);
+  });
+}
+
 // ---------- 主流程 ----------
 
 (async () => {
@@ -141,6 +192,7 @@ function setupExitButton() {
     // ===== 5. 交互 =====
     const interactions = setupInteractions(app, model);
     setupExitButton();
+    setupReminder(model);
 
     // ===== 6. 启动后盯一会儿边缘，确认动作没把角色顶出窗口 =====
     watchEdges(app);
@@ -152,6 +204,16 @@ function setupExitButton() {
     window.__petDebug = {
       app, model, measureLocalBounds, edgeHits, EXPRESSIONS, frameGap, frameGapStats,
       hitState: interactions.getHitState, // 自检用：看穿透判定和鼠标压在哪
+      // 自检用：某个坐标上的画布 alpha（判断「这里是不是角色本体」）
+      hitTestPoint: (x, y) => {
+        const a = interactions.alphaAt(x, y);
+        return { alpha: a, overPet: a > ALPHA_ENTER };
+      },
+      // 自检用：提醒到底收到几次（收到 ≠ 发出，见 HANDOFF 第六节第 19 条）
+      reminder: {
+        hits: () => reminderHits,
+        reset: () => { reminderHits = 0; },
+      },
     };
 
     log('就绪');
@@ -541,7 +603,10 @@ function setupInteractions(app, model) {
   log('交互已就绪（穿透 / 拖拽 / 点击换表情 / 右键菜单）');
 
   // 给自检用：看当前穿透判定状态（through = true 表示鼠标穿过去点桌面了）
-  return { getHitState: () => ({ overPet, overUi, through: lastSent }) };
+  return {
+    getHitState: () => ({ overPet, overUi, through: lastSent }),
+    alphaAt, // 自检用：查某个坐标上的画布 alpha
+  };
 }
 
 function reactToClick(model) {

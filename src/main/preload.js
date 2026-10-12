@@ -36,4 +36,14 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 所以量完存起来，下次启动直接用。
   getBounds: (key) => ipcRenderer.invoke('pet:get-bounds', key),
   saveBounds: (key, bounds) => ipcRenderer.send('pet:save-bounds', key, bounds),
+
+  // ---- 日程提醒 ----
+  // 日程到点了，主进程推过来，让角色表演一下（切表情 + 放动作）。
+  // 返回取消订阅的函数，方便以后热重载 / 多次注册时不重复。
+  onReminder: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('reminder:notify', handler);
+    return () => ipcRenderer.removeListener('reminder:notify', handler);
+  },
 });
