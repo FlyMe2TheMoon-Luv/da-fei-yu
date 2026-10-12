@@ -20,7 +20,7 @@
 - 模块划分：A 桌宠外壳 / B 日程提醒 / C 专注模式 / D 设置界面，四者解耦。
 - 目录约定：`src/main`（主进程，碰系统）、`src/renderer`（界面，不碰系统）、`src/assets`（静态图片）、`scripts/`（开发工具）。
 - 开发工具：`npm run shot`（截图验收）/ `check-assets`（验图片真透明）/ `make-tray-icon` / `sync-vendor` /
-  `test:schedules`（46）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（33）/
+  `test:schedules`（46）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
   `test:exit`（6）/ `test:gaze`（6）/ `test:drag` / `test:focus`（17）/
   `test:reminder-e2e`（19）/ `test:scheduler-e2e` / `test:settings-e2e`（44）。
 - 阶段 2 已拍板：**提醒气泡用独立小窗口**（贴宠物旁，可放按钮）；**错过 5 分钟内补、超过不补**。
