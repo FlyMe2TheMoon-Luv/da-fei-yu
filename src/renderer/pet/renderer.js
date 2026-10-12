@@ -103,6 +103,21 @@ function setupTopButtons() {
 
   bind('btn-settings', '日程管理按钮', 'openSettings');
   bind('btn-exit', '退出按钮', 'quit');
+
+  hintTopButtons();
+}
+
+// 启动时让右上角两个按钮「呼吸」三下。
+// 起因：主人说按钮太不显眼、根本找不到 —— 桌宠是常驻窗口，没有「第一次打开」这种
+// 提示时机，只能靠一小段动画自己刷存在感。
+// 动画放完就把 class 摘掉，免得一直占着 transform（会和 hover 的放大效果打架）。
+function hintTopButtons() {
+  const els = ['btn-settings', 'btn-exit']
+    .map((id) => document.getElementById(id))
+    .filter(Boolean);
+  if (!els.length) return;
+  els.forEach((el) => el.classList.add('attn'));
+  setTimeout(() => els.forEach((el) => el.classList.remove('attn')), 3500);
 }
 
 // ---------- 日程提醒：角色的「表演」 ----------
