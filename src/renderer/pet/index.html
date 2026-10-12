@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>桌宠</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      font-family: "Microsoft YaHei", system-ui, sans-serif;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      color: #333;
+    }
+    .box {
+      text-align: center;
+      line-height: 1.8;
+    }
+    .emoji { font-size: 64px; }
+    h1 { font-size: 20px; margin: 8px 0; }
+    .hint { color: #888; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="emoji">🌿</div>
+    <h1>桌宠骨架已就位</h1>
+    <p class="hint">阶段 0 验收页 · 透明窗口 / 拖拽 / 托盘在阶段 1 登场</p>
+    <p class="hint" id="ver"></p>
+  </div>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

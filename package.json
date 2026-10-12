@@ -1,0 +1,17 @@
+{
+  "name": "desktop-pet",
+  "version": "0.1.0",
+  "description": "桌面宠物：日程提醒 + 专注模式",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "node scripts/start-dev.js",
+    "start:raw": "electron .",
+    "build": "electron-builder"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  }
+}
