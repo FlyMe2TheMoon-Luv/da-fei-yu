@@ -9,6 +9,7 @@
     "test:schedules": "node scripts/test-schedules.js",
     "test:scheduler": "node scripts/test-scheduler.js",
     "test:reminder": "node scripts/test-reminder.js",
+    "test:place": "node scripts/test-place.js",
     "test:scheduler-e2e": "node scripts/start-dev.js --no-gpu --selftest=scheduler --isolated",
     "test:reminder-e2e": "node scripts/start-dev.js --no-gpu --selftest=reminder --isolated",
     "test:settings-e2e": "node scripts/start-dev.js --no-gpu --selftest=settings --isolated",
