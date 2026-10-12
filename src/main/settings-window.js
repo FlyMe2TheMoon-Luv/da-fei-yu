@@ -17,9 +17,10 @@
 //   这里只做转交：把界面递上来的东西原样交给 schedules.add/update，
 //   它返回 { error } 就原样递回去给界面显示。
 
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const schedules = require('./schedules');
+const { placeNear } = require('./place');
 
 const HTML = path.join(__dirname, '..', 'renderer', 'settings', 'index.html');
 const PRELOAD = path.join(__dirname, 'preload-settings.js');
@@ -61,6 +62,48 @@ function restorePet() {
   }
 }
 
+// ---------- 把窗口摆到桌宠旁边 ----------
+// 主人反馈：以前不指定 x/y，Electron 就把窗口丢在屏幕正中 —— 离桌宠太远，
+// 点完按钮还得满屏找窗口。现在改成「贴着桌宠的右上方出现」。
+//
+// ── ⚠ 为什么用 setBounds 而不是 setPosition（实测踩到的坑）──
+//   这台机器屏幕缩放 1.5。带标题栏（frame:true）的窗口在这个缩放比下，
+//   「外框尺寸」会自己飘：
+//     用 width:480,height:640 建出来 → getBounds() 报 481×641
+//     第一次 setPosition() 之后     → 又涨成 482×642
+//     show()/focus()/moveTop() 之后 → 还可能再涨 1
+//   结果是：算位置时读到的是 482，窗口真身是 484，摆出来就差 1~2 像素。
+//   而 setBounds({..., width, height}) 会把尺寸一起写回去，
+//   读回来就是精确的 480×640 —— 既消掉了偏差，也顺手把被撑大的尺寸掰正。
+//   所以这里位置用**固定的 WIN_W/WIN_H** 算，再用 setBounds 一次写回。
+//
+// ── 另一个细节 ──
+//   用 screen.getDisplayMatching(宠物) 挑屏幕：多显示器时窗口要跟着桌宠
+//   跑到它所在的那块屏上，而不是固定放在主屏。
+// 算不出位置（桌宠被隐藏/已销毁）就返回 null，让 Electron 用默认位置，不至于打不开。
+function positionNearPet() {
+  const pet = getPetWindow();
+  if (!pet || pet.isDestroyed() || !win || win.isDestroyed()) return null;
+
+  try {
+    const petRect = pet.getBounds();
+    const display = screen.getDisplayMatching(petRect);
+    const { x, y, side, clamped } = placeNear(
+      petRect,
+      { w: WIN_W, h: WIN_H },
+      display.workArea,
+    );
+    win.setBounds({ x, y, width: WIN_W, height: WIN_H });
+    console.log(`[settings] 窗口摆到桌宠 ${side}${clamped ? '（被屏幕边挤过）' : ''} → ${x},${y}` +
+      ` · 桌宠 ${petRect.x},${petRect.y} ${petRect.width}×${petRect.height}` +
+      ` · 窗口 ${WIN_W}×${WIN_H} · 屏工作区 ${display.workArea.width}×${display.workArea.height}`);
+    return { x, y, side, clamped };
+  } catch (err) {
+    console.error('[settings] 算窗口位置失败，改用默认位置：', err && err.message);
+    return null;
+  }
+}
+
 // ---------- 窗口 ----------
 
 function open() {
@@ -98,6 +141,10 @@ function open() {
   win.setMenuBarVisibility(false); // 用不上菜单栏，藏掉省地方
   win.loadFile(HTML);
 
+  // 先摆一次位置（此刻窗口还藏着，主人看不到挪动过程）。
+  // ready-to-show 里还会再摆一次 —— 那时外框尺寸才算彻底定下来。
+  positionNearPet();
+
   // 开发时把界面日志转发到终端，方便排查
   if (!app.isPackaged) {
     win.webContents.on('console-message', (...args) => {
@@ -113,12 +160,17 @@ function open() {
     // 但桌宠是 screen-saver 层级，比普通窗口高，会压住设置窗口一块 ——
     // 所以改成「设置窗口开着的时候把桌宠降下来」，见 lowerPet() 的注释。
     lowerPet();
+    // 摆位置（用 setBounds，顺带把可能被系统撑大的外框尺寸掰回 WIN_W×WIN_H）。
+    positionNearPet();
     win.show();
     win.focus();
     // show() + focus() 在「前面有全屏程序」等情况下不一定能把窗口抬到最前
     // （Windows 有前台锁定策略）。moveTop() 是专门干这个的：
     // 不管焦点，直接把窗口抬到同层最上面。成本极低，加着不亏。
     win.moveTop();
+    // 显示之后再摆一次。show()/focus()/moveTop() 这一串动作在 1.5 倍缩放下
+    // 可能又把外框撑大 1 像素，再写一次把偏差抹掉（位置没变时这步等于空操作）。
+    positionNearPet();
   });
 
   win.on('closed', () => {
@@ -177,4 +229,13 @@ function init(opts = {}) {
   console.log('[settings] 日程管理窗口已就绪（按需打开）');
 }
 
-module.exports = { init, open, close, isOpen, getWindow: () => (isOpen() ? win : null) };
+module.exports = {
+  init,
+  open,
+  close,
+  isOpen,
+  getWindow: () => (isOpen() ? win : null),
+  // 自检要用：复算「窗口该待在哪」时得知道窗口的标称尺寸
+  WIN_W,
+  WIN_H,
+};
