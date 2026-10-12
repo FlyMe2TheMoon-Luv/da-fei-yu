@@ -131,19 +131,26 @@ function blocksOf(items, date, axis) {
 
 // 同一个标题永远同一个颜色；空标题归到 gray。
 //
-// 用「标题字符码滚动哈希」，**不要**用 item.id —— id 会变（删了重建就是新 id），
+// 用「标题的稳定哈希」，**不要**用 item.id —— id 会变（删了重建就是新 id），
 // 颜色跟着 id 跳会显得很吵。更不要随机数（那样每次刷新都在变色）。
 // gray 留给「没有标题」这种兜底情况，所以哈希只在前面 7 个彩色里转。
+//
+// ⚠ 哈希用 FNV-1a，**不要**退回「字符码累加取模」。
+//   中文短标题的码点扎堆（都是 U+4E00 往上），累加再模 7 会一片同色 ——
+//   实测「吃药 / 买菜 / 健身」全落进同一档，周视图上三件事一个颜色，
+//   而「不同颜色的长方体代表不同任务」正是主人的原始需求。
+//   FNV-1a 有雪崩效应，同样 6 个名字能散出 5 种颜色（scripts/test-week.js 盯着它）。
 function colorOf(title) {
   if (typeof title !== 'string') return 'gray';
   const t = title.trim();
   if (!t) return 'gray';
 
-  let h = 0;
+  let h = 2166136261; // FNV offset basis
   for (let i = 0; i < t.length; i++) {
-    h = (h * 31 + t.charCodeAt(i)) >>> 0;
+    h ^= t.charCodeAt(i);
+    h = Math.imul(h, 16777619); // FNV prime
   }
-  return PALETTE[h % (PALETTE.length - 1)];
+  return PALETTE[(h >>> 0) % (PALETTE.length - 1)];
 }
 
 module.exports = {

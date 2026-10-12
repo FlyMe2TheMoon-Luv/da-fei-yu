@@ -184,6 +184,16 @@ const TITLES = [
 const used = new Set(TITLES.map((t) => colorOf(t)));
 ok(used.size >= 3, `★ 负对照：20 个不同标题至少散出 3 种颜色（实际 ${used.size} 种：${[...used].join(',')}）`);
 ok([...used].every((c) => PALETTE.includes(c)), '散出来的颜色都在调色板里');
+// ★ 负对照：几个**真实**的日程名不能挤成一坨同色。
+//   起因：截图验收时发现「吃药 / 买菜 / 健身」全是蓝色 —— 原来的
+//   「字符码累加取模」在中文短标题上分布太差（CJK 码点扎堆，模 7 全落在同一档）。
+//   光测「20 个标题 >= 3 种颜色」抓不到这个，得拿真实名字来盯。
+const DEMO_TITLES = ['吃药', '开会', '写报告', '买菜', '健身', '读书'];
+const demoColors = new Set(DEMO_TITLES.map((t) => colorOf(t)));
+ok(demoColors.size >= 4,
+  `★ 负对照：6 个常见日程名至少散出 4 种颜色（实际 ${demoColors.size} 种：${[...demoColors].join(',')}）`);
+ok(DEMO_TITLES.every((t) => colorOf(t) === colorOf(t)), '★ 负对照：这些名字的取色依然是稳定的（不是随机）');
+
 // 颜色不能跟着 id 跳（用 id 取色的话，改一条日程颜色就会变，看着很吵）
 const sameTitle = [mk({ title: '开会' }), { ...mk({ title: '开会' }), id: 's_999' }];
 ok(blocksOf(sameTitle, TODAY, AX).every((b) => b.color === colorOf('开会')), '★ 负对照：颜色只跟标题走，不跟 id 走');
