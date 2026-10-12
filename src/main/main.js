@@ -947,6 +947,12 @@ async function runSettingsSelfTest() {
     ` → visible=${sw.isVisible()}`);
   log(`窗口尺寸 ${sw.getBounds().width}×${sw.getBounds().height}`);
 
+  // 桌宠本该是 screen-saver 层级，会压住设置窗口一块 ——
+  // 所以设置窗口开着的时候要把它临时降下来（关掉再升回去）。
+  ok(win.isAlwaysOnTop() === false,
+    '★ 设置窗口开着时，桌宠被降到普通层级（不会压住设置窗口）',
+    ` → 桌宠 isAlwaysOnTop=${win.isAlwaysOnTop()}`);
+
   // ===== ② 这个窗口必须能抢焦点 =====
   // 气泡窗口是 focusable:false（不打断主人打字），设置窗口正好相反。
   // ⚠ 负对照放在第 ⑦ 步 —— 那里气泡窗口已经建出来了，拿它来对照才有意义。
@@ -956,18 +962,22 @@ async function runSettingsSelfTest() {
     ` → focusable=${sw.isFocusable()}`);
 
   // ===== ③ 空列表该显示「还没有日程」=====
-  log('③ 空状态');
+  // ⚠ 不能假设列表是空的 —— 主人本来就可能已经有日程了。
+  //   所以只验「提示的显示与否，和列表空不空对得上」，不验「必须是 0 条」。
+  log('③ 空状态提示');
   const emptyState = await sw.webContents.executeJavaScript(`(() => ({
     items: document.querySelectorAll('#list .item').length,
     emptyShown: !document.getElementById('empty').classList.contains('hidden'),
   }))()`);
-  ok(emptyState.items === 0 && emptyState.emptyShown === true,
-    '没有日程时显示「还没有日程」的提示，而不是一片空白',
+  ok(emptyState.items === 0 ? emptyState.emptyShown === true : emptyState.emptyShown === false,
+    '列表空时显示「还没有日程」、有日程时不显示（两者对得上）',
     ` → 列表 ${emptyState.items} 条 · 提示显示=${emptyState.emptyShown}`);
 
   // ===== ④ 负对照：标题不填就该被拦下来 =====
   log('④ ★ 负对照：标题空着保存 → 必须被拦下，且不能写进文件');
+  const fileCountBefore = schedules.list().length;
   const bad = await sw.webContents.executeJavaScript(`(async () => {
+    const before = document.querySelectorAll('#list .item').length;
     document.getElementById('btn-add').click();
     document.getElementById('f-title').value = '';
     document.getElementById('f-time').value = '07:15';
@@ -975,6 +985,7 @@ async function runSettingsSelfTest() {
     await new Promise((r) => setTimeout(r, 300));
     const err = document.getElementById('form-error');
     return {
+      before,
       errorShown: !err.classList.contains('hidden'),
       errorText: err.textContent,
       formStillOpen: !document.getElementById('form').classList.contains('hidden'),
@@ -983,11 +994,18 @@ async function runSettingsSelfTest() {
   })()`);
   ok(bad.errorShown === true, '界面上给出了错误提示', ` → “${bad.errorText}”`);
   ok(bad.formStillOpen === true, '表单没被关掉（主人填的东西还在，不用重填）');
-  ok(schedules.list().filter((x) => x.title === '').length === 0, '★ 主进程那边确实没写进文件');
+  ok(bad.items === bad.before, '界面上一条都没多', ` → 还是 ${bad.before} 条`);
+  ok(schedules.list().length === fileCountBefore, '★ 主进程那边也确实没写进文件',
+    ` → 还是 ${fileCountBefore} 条`);
 
   // ===== ⑤ 正例：填好保存 → 界面和文件两边都要有 =====
   log('⑤ 添加一条日程（每天 07:15 自检·日程）');
   const added = await sw.webContents.executeJavaScript(`(async () => {
+    const before = document.querySelectorAll('#list .item').length;
+    const findMine = () => [...document.querySelectorAll('#list .item')]
+      .find((li) => li.querySelector('.title').textContent === '自检·日程') || null;
+
+    document.getElementById('btn-add').click();
     document.getElementById('f-title').value = '自检·日程';
     document.getElementById('f-time').value = '07:15';
     const rep = document.getElementById('f-repeat');
@@ -995,8 +1013,10 @@ async function runSettingsSelfTest() {
     rep.dispatchEvent(new Event('change'));
     document.getElementById('btn-save').click();
     await new Promise((r) => setTimeout(r, 400));
-    const li = document.querySelector('#list .item');
+
+    const li = findMine();
     return {
+      before,
       count: document.querySelectorAll('#list .item').length,
       time: li ? li.querySelector('.time').textContent : null,
       title: li ? li.querySelector('.title').textContent : null,
@@ -1007,7 +1027,8 @@ async function runSettingsSelfTest() {
   })()`);
 
   const inFile = schedules.list().filter((x) => x.title === '自检·日程');
-  ok(added.count === 1, '★ 界面上出现了这条日程', ` → 列表 ${added.count} 条`);
+  ok(added.count === added.before + 1, '★ 界面上多了一条（不是「等于 1 条」—— 主人可能本来就有日程）',
+    ` → ${added.before} 条 → ${added.count} 条`);
   ok(inFile.length === 1, '★ 主进程那边确实存进了文件（两边对上了才算数）',
     ` → 文件里 ${inFile.length} 条`);
   ok(added.time === '07:15' && added.title === '自检·日程', '列表上显示的时间 / 标题和填的一致',
@@ -1020,23 +1041,37 @@ async function runSettingsSelfTest() {
   // ===== ⑥ 开关：临时关掉 / 打开 =====
   log('⑥ 开关（临时关掉，不删除）');
   if (testId) {
+    // ⚠ 一定要按标题找到「我们自己那一行」再操作 ——
+    //   直接 querySelector('#list .item .switch') 会拿到第一条，而第一条未必是我们的。
     const toggled = await sw.webContents.executeJavaScript(`(async () => {
-      const sw2 = document.querySelector('#list .item .switch');
+      const findMine = () => [...document.querySelectorAll('#list .item')]
+        .find((li) => li.querySelector('.title').textContent === '自检·日程') || null;
+
+      const row = findMine();
+      if (!row) return { error: '列表里找不到「自检·日程」那一行' };
+      const sw2 = row.querySelector('.switch');
       const before = sw2.getAttribute('aria-pressed');
       sw2.click();
       await new Promise((r) => setTimeout(r, 400));
-      const after = document.querySelector('#list .item .switch').getAttribute('aria-pressed');
-      return { before, after, off: document.querySelector('#list .item').classList.contains('off') };
+
+      const row2 = findMine();
+      return {
+        before,
+        after: row2.querySelector('.switch').getAttribute('aria-pressed'),
+        off: row2.classList.contains('off'),
+      };
     })()`);
     const item = schedules.get(testId);
-    ok(toggled.before === 'true' && toggled.after === 'false', '点开关后界面状态翻转了',
-      ` → ${toggled.before} → ${toggled.after}`);
+    ok(!toggled.error, toggled.error || '找到「自检·日程」那一行并点了开关', toggled.error ? '' : ` → ${toggled.before} → ${toggled.after}`);
+    ok(toggled.before === 'true' && toggled.after === 'false', '点开关后界面状态翻转了');
     ok(item && item.enabled === false, '★ 主进程那边 enabled 也真的变成 false 了');
     ok(toggled.off === true, '关掉的日程在列表上变淡了（一眼能看出它是关着的）');
 
     // 打开回来，顺便验一下「关掉不等于删除」
     await sw.webContents.executeJavaScript(`(async () => {
-      document.querySelector('#list .item .switch').click();
+      const row = [...document.querySelectorAll('#list .item')]
+        .find((li) => li.querySelector('.title').textContent === '自检·日程');
+      if (row) row.querySelector('.switch').click();
       await new Promise((r) => setTimeout(r, 400));
     })()`);
     const back = schedules.get(testId);
@@ -1073,27 +1108,41 @@ async function runSettingsSelfTest() {
   log('⑧ 删除：按一下是「确定删？」，按两下才真删');
   if (testId) {
     const del = await sw.webContents.executeJavaScript(`(async () => {
-      const b = document.querySelector('#list .item .actions .danger');
+      const before = document.querySelectorAll('#list .item').length;
+      const row = [...document.querySelectorAll('#list .item')]
+        .find((li) => li.querySelector('.title').textContent === '自检·日程');
+      if (!row) return { error: '列表里找不到「自检·日程」那一行' };
+      const b = row.querySelector('.actions .danger');
       b.click();                                  // 第一下：变成确认
       await new Promise((r) => setTimeout(r, 150));
       const label = b.textContent;
-      const stillThere = document.querySelectorAll('#list .item').length;
-      return { label, stillThere };
+      const stillThere = [...document.querySelectorAll('#list .item')]
+        .some((li) => li.querySelector('.title').textContent === '自检·日程');
+      return { before, label, stillThere };
     })()`);
     ok(del.label === '确定删？', '第一下只是变成「确定删？」', ` → “${del.label}”`);
-    ok(del.stillThere === 1 && !!schedules.get(testId), '★ 第一下没有真的删掉（防手滑生效）');
+    ok(del.stillThere === true && !!schedules.get(testId), '★ 第一下没有真的删掉（防手滑生效）');
 
     const after = await sw.webContents.executeJavaScript(`(async () => {
-      document.querySelector('#list .item .actions .danger').click();
+      const row = [...document.querySelectorAll('#list .item')]
+        .find((li) => li.querySelector('.title').textContent === '自检·日程');
+      if (row) row.querySelector('.actions .danger').click();
       await new Promise((r) => setTimeout(r, 400));
+      const items = document.querySelectorAll('#list .item').length;
       return {
-        count: document.querySelectorAll('#list .item').length,
+        items,
+        mineGone: ![...document.querySelectorAll('#list .item')]
+          .some((li) => li.querySelector('.title').textContent === '自检·日程'),
         emptyShown: !document.getElementById('empty').classList.contains('hidden'),
       };
     })()`);
-    ok(after.count === 0, '第二下真的删掉了（界面上没了）');
+    ok(after.mineGone === true, '第二下真的删掉了（界面上找不到它了）');
+    ok(after.items === del.before - 1, '★ 列表条数正好少 1 条（没有误删别人的日程）',
+      ` → ${del.before} 条 → ${after.items} 条`);
     ok(schedules.get(testId) === null, '★ 主进程那边也确实没了');
-    ok(after.emptyShown === true, '删空之后「还没有日程」的提示又回来了');
+    ok(after.items === 0 ? after.emptyShown === true : after.emptyShown === false,
+      '删完之后「还没有日程」提示的显示与否，和列表空不空对得上',
+      ` → 剩 ${after.items} 条 · 提示显示=${after.emptyShown}`);
   }
 
   // ===== ⑨ 收尾 =====
@@ -1110,6 +1159,9 @@ async function runSettingsSelfTest() {
   settingsWindow.close();
   await sleep(300);
   ok(settingsWindow.isOpen() === false, '关闭后窗口对象被回收（不会漏）');
+  ok(win.isAlwaysOnTop() === true,
+    '★ 设置窗口关掉后，桌宠层级已恢复（继续浮在最上层）',
+    ` → 桌宠 isAlwaysOnTop=${win.isAlwaysOnTop()}`);
 
   finishExitTest(pass, fail, '日程管理窗口');
 }
@@ -1135,6 +1187,8 @@ if (!gotLock) {
     // 「预览提醒效果」按钮直接复用提醒呈现那套，看到的和真到点时一模一样。
     settingsWindow.init({
       onPreview: () => reminder.present({ title: '开会（预览效果）' }, new Date()),
+      // 设置窗口打开期间要临时把桌宠降到普通层级，否则桌宠会压住设置窗口
+      getPetWindow: () => win,
     });
 
     // 开发便利：启动时直接把日程管理窗口开出来，方便做视觉验收 / 截图。

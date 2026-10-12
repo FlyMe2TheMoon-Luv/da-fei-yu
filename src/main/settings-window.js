@@ -29,7 +29,37 @@ const WIN_H = 640;
 
 let win = null;
 let inited = false;
-let onPreview = null; // 由 main.js 注入：点「预览提醒效果」时调 reminder.present
+let onPreview = null;      // 由 main.js 注入：点「预览提醒效果」时调 reminder.present
+let getPetWindow = () => null; // 由 main.js 注入：要临时把桌宠「降一层」
+
+// ---------- 临时把桌宠降一层 ----------
+// 起因：桌宠是 alwaysOnTop('screen-saver') 层级，比普通窗口高 ——
+// 设置窗口一打开就会被桌宠压住一块，主人填表时很碍事。
+// 所以设置窗口开着的期间把桌宠降到普通层级，关掉再升回去。
+// （只降「层级」，不隐藏桌宠 —— 它还在，只是可以被设置窗口盖住。）
+function lowerPet() {
+  const pet = getPetWindow();
+  if (!pet || pet.isDestroyed()) return;
+  try {
+    pet.setAlwaysOnTop(false);
+    pet.setVisibleOnAllWorkspaces(false);
+    console.log('[settings] 桌宠已降到普通层级（让设置窗口能盖住它）');
+  } catch (err) {
+    console.error('[settings] 降桌宠层级失败：', err && err.message);
+  }
+}
+
+function restorePet() {
+  const pet = getPetWindow();
+  if (!pet || pet.isDestroyed()) return;
+  try {
+    pet.setAlwaysOnTop(true, 'screen-saver');
+    pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    console.log('[settings] 桌宠层级已恢复（继续浮在最上层）');
+  } catch (err) {
+    console.error('[settings] 恢复桌宠层级失败：', err && err.message);
+  }
+}
 
 // ---------- 窗口 ----------
 
@@ -78,9 +108,11 @@ function open() {
   }
 
   win.once('ready-to-show', () => {
-    // 注意：新窗口默认是普通层级（不置顶）。
-    // 桌宠是 screen-saver 层级，会浮在设置窗口上面 —— 但桌宠只有 400×380，
-    // 挡住的位置主人拖一下桌宠就避开了，所以不给设置窗口加置顶。
+    // 设置窗口本身是普通层级（**不置顶**）—— 主人可能想边看别的软件边改日程，
+    // 一个永远浮在最上面的设置窗口只会碍事。
+    // 但桌宠是 screen-saver 层级，比普通窗口高，会压住设置窗口一块 ——
+    // 所以改成「设置窗口开着的时候把桌宠降下来」，见 lowerPet() 的注释。
+    lowerPet();
     win.show();
     win.focus();
     // show() + focus() 在「前面有全屏程序」等情况下不一定能把窗口抬到最前
@@ -89,7 +121,10 @@ function open() {
     win.moveTop();
   });
 
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => {
+    win = null;
+    restorePet();
+  });
 
   return win;
 }
@@ -106,6 +141,7 @@ function isOpen() {
 
 function init(opts = {}) {
   if (typeof opts.onPreview === 'function') onPreview = opts.onPreview;
+  if (typeof opts.getPetWindow === 'function') getPetWindow = opts.getPetWindow;
   if (inited) return;
   inited = true;
 
