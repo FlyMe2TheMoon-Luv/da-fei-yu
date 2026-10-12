@@ -5,14 +5,17 @@
 // 不碰界面（那是 2-4 的表单窗口）。
 //
 // 存哪儿：userData/schedules.json（硬性约定第 6 条，绝不写程序目录）
-// 存什么：
+// 存什么（v2：日程分「时间点 / 时段」两类）：
 //   {
-//     version: 1,
+//     version: 2,
 //     items: [
 //       {
 //         id: "s_1728712345678",       // 时间戳生成，不引 uuid 库
 //         title: "开会",
+//         kind: "point",               // ★ v2：point（时间点）| span（时段）
 //         time: "09:30",               // 本地时间 HH:mm，一律本地，不碰 UTC
+//         endTime: null,               // ★ v2：kind=span 时必填且严格晚于 time；
+//                                      //        kind=point 时恒为 null
 //         repeat: "once",              // once | daily | weekdays | weekly
 //         date: "2026-10-13",          // repeat=once 时必填
 //         weekdays: [1, 3, 5],         // repeat=weekly 时必填（0=周日）
@@ -23,15 +26,22 @@
 //     ]
 //   }
 //
+// v1 → v2 不需要迁移脚本：没有 kind 字段的老记录，读进来自动当成 point
+// （见 sanitize 里那行「没给就按时间点」）。
+// 时段不允许跨天（endTime 必须严格晚于 time）—— 跨天会让周视图绘制和
+// 「提醒在几点」都变复杂，见 PLAN-V2 的决定表。
+//
 // 设计原则：**坏数据绝不带崩主进程**。
 // 文件读坏了 → 当成空的；单条记录坏了 → 丢掉那一条，其余的照常用。
 
 const store = require('./store');
 
 const FILE = 'schedules.json';
-const VERSION = 1;
+const VERSION = 2;
 
 const REPEATS = ['once', 'daily', 'weekdays', 'weekly'];
+// v2：日程两种类型。point = 到点提醒一下；span = 占一段时间（只在开始时刻提醒）。
+const KINDS = ['point', 'span'];
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/; // 00:00 ~ 23:59
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -83,6 +93,27 @@ function sanitize(raw) {
   // 时间
   if (!isTimeString(raw.time)) return { ok: false, error: '时间格式不对，要 HH:mm，例如 09:30' };
   out.time = raw.time;
+
+  // 类型：没给就按「时间点」—— 这样 v1 的老数据不用迁移脚本，读进来就是合法的 point。
+  // 但给了个不认识的（比如 'meeting'）必须报错，绝不能悄悄当 point 收下。
+  const rawKind = raw.kind;
+  const kind = (rawKind === undefined || rawKind === null || rawKind === '') ? 'point' : rawKind;
+  if (!KINDS.includes(kind)) {
+    return { ok: false, error: `日程类型只能是 ${KINDS.join(' / ')} 之一` };
+  }
+  out.kind = kind;
+
+  if (kind === 'point') {
+    // 时间点没有「结束时间」这个概念。给了也丢掉，免得留脏数据让周视图画错。
+    out.endTime = null;
+  } else {
+    if (!isTimeString(raw.endTime)) return { ok: false, error: '时段日程要给结束时间，格式 HH:mm' };
+    // 不允许相等、不允许跨天：跨天会让周视图和「提醒在几点」都变复杂（见 PLAN-V2 决定表）
+    if (minutesOfDay(raw.endTime) <= minutesOfDay(raw.time)) {
+      return { ok: false, error: '结束时间要晚于开始时间（暂不支持跨天）' };
+    }
+    out.endTime = raw.endTime;
+  }
 
   // 重复规则：没给就按「一次性」，给了但不认识 → 直接报错。
   // 必须区分这两种情况 —— 否则「每三天」会被悄悄当成 once，
@@ -255,6 +286,7 @@ module.exports = {
   FILE,
   VERSION,
   REPEATS,
+  KINDS,
   list,
   get,
   add,

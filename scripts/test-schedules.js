@@ -154,6 +154,57 @@ ok(mixed.length === 2, `坏的被丢掉、好的留下（留下 ${mixed.length} 
 ok(mixed.every((it) => it.id && it.title), '留下的每条都有 id 和标题');
 ok(new Set(mixed.map((it) => it.id)).size === mixed.length, 'id 没有重复（撞车的被重新编号）');
 
+// ---------- 9b. v2：时段 ----------
+section('9b. v2 新增：时段（kind / endTime）');
+ok(schedules.VERSION === 2, `版本号升到 2（当前 ${schedules.VERSION}）`);
+ok(
+  Array.isArray(schedules.KINDS) && schedules.KINDS.join() === 'point,span',
+  `KINDS 就是 point / span（当前 ${JSON.stringify(schedules.KINDS)}）`
+);
+
+// 正例：合法的时段
+const span = schedules.add({ title: '自检·开会', kind: 'span', time: '09:30', endTime: '11:00', repeat: 'daily' });
+ok(span && !span.error, `合法时段建成功${span && span.error ? `（却被拒：${span.error}）` : ''}`);
+ok(span && span.kind === 'span', 'kind 存成 span');
+ok(span && span.endTime === '11:00', 'endTime 存成 11:00');
+
+// ★ 负对照①：结束时间和开始时间一样 → 必须被拒（零长度时段没有意义）
+const same = schedules.add({ title: '自检·一样', kind: 'span', time: '09:30', endTime: '09:30', repeat: 'daily' });
+ok(same && typeof same.error === 'string', `结束时间等于开始时间 → 被拒（${same && same.error}）`);
+
+// ★ 负对照②：结束时间早于开始时间 → 必须被拒（等于跨天，暂不支持）
+const backwards = schedules.add({ title: '自检·倒流', kind: 'span', time: '11:00', endTime: '09:30', repeat: 'daily' });
+ok(backwards && typeof backwards.error === 'string', `结束时间早于开始时间 → 被拒（${backwards && backwards.error}）`);
+
+// ★ 负对照③：时段缺 endTime → 必须被拒
+const missingEnd = schedules.add({ title: '自检·缺尾巴', kind: 'span', time: '09:30', repeat: 'daily' });
+ok(missingEnd && typeof missingEnd.error === 'string', `时段没给结束时间 → 被拒（${missingEnd && missingEnd.error}）`);
+
+// ★ 负对照④：endTime 格式错 → 必须被拒
+const badEndFmt = schedules.add({ title: '自检·格式', kind: 'span', time: '09:30', endTime: '25:00', repeat: 'daily' });
+ok(badEndFmt && typeof badEndFmt.error === 'string', `结束时间格式错 25:00 → 被拒（${badEndFmt && badEndFmt.error}）`);
+
+// ★ 负对照⑤：kind 不认识 → 必须被拒（绝不能悄悄当 point 收下）
+const badKind = schedules.add({ title: '自检·怪类型', kind: 'meeting', time: '09:30', repeat: 'daily' });
+ok(badKind && typeof badKind.error === 'string', `未知类型 meeting → 被拒（${badKind && badKind.error}）`);
+
+// point 不许带 endTime：给了也要被清成 null（不能留脏数据让周视图画错）
+const pointWithEnd = schedules.add({ title: '自检·时间点', kind: 'point', time: '07:15', endTime: '08:00', repeat: 'daily' });
+ok(pointWithEnd && !pointWithEnd.error, '时间点带了个多余的结束时间，仍能建成功');
+ok(pointWithEnd && pointWithEnd.endTime === null, '★ 时间点的 endTime 被清成 null（脏数据没留下）');
+
+// v1 老数据自动升级：没有 kind 字段的记录，读进来必须是 point + endTime null
+const legacy = schedules.sanitize({ title: '老数据', time: '09:00', repeat: 'once', date: '2026-10-13' });
+ok(legacy && legacy.ok, 'v1 老记录（没有 kind 字段）能通过校验');
+ok(legacy && legacy.item.kind === 'point', '★ 老记录自动升级成「时间点」，不用写迁移脚本');
+ok(legacy && legacy.item.endTime === null, '老记录的 endTime 补成 null');
+
+// 时段的改动也要能过校验（走 update 这条路，不是只有 add）
+const movedSpan = schedules.update(span.id, { endTime: '12:00' });
+ok(movedSpan && !movedSpan.error && movedSpan.endTime === '12:00', '时段能改成 12:00 结束');
+const shrunkSpan = schedules.update(span.id, { endTime: '08:00' });
+ok(shrunkSpan && typeof shrunkSpan.error === 'string', `★ 改成比开始还早 → 被拒（${shrunkSpan && shrunkSpan.error}）`);
+
 // ---------- 10. 收尾 ----------
 section('10. 收尾');
 fs.rmSync(FAKE_USER_DATA, { recursive: true, force: true });
