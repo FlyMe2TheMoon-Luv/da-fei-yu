@@ -29,21 +29,21 @@
 //
 //   第二段：一个都放不下（宠物贴着屏幕边，边上剩的地方不够放窗口）时，
 //          不能「随便挑一个」—— 那样会出现窗口跑到屏幕另一头、离宠物十万八千里。
-//          正确做法是把首选方位的理想落点**夹进工作区**，用它当靶心，挑离靶心最近的。
+//          正确做法是把首选方位的理想落点**夹进工作区**，用它当靶心，挑代价最小的。
 //          （注意：靶心本身就是「夹过的 up-right」，所以 up-right 的距离恒为 0 ——
 //            也就是说这一段的默认答案就是「尽量靠右上方，靠不到就贴着屏幕边」。）
 //
-//          但只按距离挑有个坑：宠物贴在屏幕**右上角**时，「夹过的 up-right」会正好
-//          落在角色身上，窗口一打开就把桌宠盖住了。所以这里多一条偏好 ——
-//          **优先挑不压住宠物的**，实在全都会压住（屏幕比窗口还小）才认了。
-//          「窗口盖住角色」比「离得稍微远一点」难受得多。
+//          代价 = 离靶心的距离 + **压住宠物的面积 / 100**。
+//          压住宠物不是「一票否决」，而是按面积算代价 —— 原因见下面第二段的注释：
+//          宠物停在屏幕右下角时，「正上方右对齐」只差 9 像素放不下，一票否决会把
+//          窗口甩到 440px 外的屏幕左边，比压住那 9 像素（其实还是透明边）糟糕得多。
 //
 //   举例（主人这台机器，屏 1707×1067，宠物 400×380 在 1340,650，窗口 480×640）：
 //     宠物的右上方其实放不下（窗口 640 高，宠物顶上只剩 650px，差一点；
 //     右边更是一点地方都没有）。
 //     只按「超出最少」挑的老做法 → 选中 up-left → 窗口跑到 x=850，离宠物 490px，很怪。
 //     现在 → 靶心 = 夹过的 up-right = (1219,8) → 窗口贴在宠物**正上方、顶到最右**，
-//     只比宠物右边缘偏左 41px，而且不压住它。这才是「靠近宠物右上方」。
+//     只比宠物右边缘偏左 41px，而且完全不压住它。这才是「靠近宠物右上方」。
 
 const DEFAULTS = {
   gap: 10,   // 和宠物之间留的缝
@@ -87,10 +87,11 @@ function clampPoint(p, lim) {
   };
 }
 
-// 两个矩形是否相交。p 是窗口左上角坐标。
-function overlaps(p, size, petRect) {
-  return p.x < petRect.x + petRect.width && p.x + size.w > petRect.x &&
-         p.y < petRect.y + petRect.height && p.y + size.h > petRect.y;
+// 两个矩形的相交面积（不相交为 0）。p 是窗口左上角坐标。
+function overlapArea(p, size, petRect) {
+  const w = Math.min(p.x + size.w, petRect.x + petRect.width) - Math.max(p.x, petRect.x);
+  const h = Math.min(p.y + size.h, petRect.y + petRect.height) - Math.max(p.y, petRect.y);
+  return w > 0 && h > 0 ? w * h : 0;
 }
 
 // petRect : { x, y, width, height }  宠物窗口在屏幕上的位置（逻辑像素）
@@ -117,23 +118,29 @@ function placeNear(petRect, size, workArea, opts = {}) {
     }
   }
 
-  // ---- 第二段：全都要挪。以「夹过的 up-right」为靶心，挑最近的；优先不压住宠物 ----
+  // ---- 第二段：全都要挪。以「夹过的 up-right」为靶心，挑代价最小的 ----
+  // 代价 = 离靶心的曼哈顿距离 + 压住宠物的面积/100。
+  //
+  // ⚠ 为什么「压住宠物」要按面积算代价，而不是「压住就一票否决」：
+  //   宠物停在屏幕右下角（默认位置）时，「正上方、右对齐」只差 9 像素放不下
+  //   （窗口底边 648，宠物顶边 639）。一票否决的话，唯一不压住它的方位在屏幕
+  //   左边 —— 窗口被甩到 440px 外。这跟主人抱怨的「太远」是同一个毛病。
+  //   而且那 9 像素其实是角色外的透明边（窗口 382 高、角色只占 325，上下各留
+  //   约 28px 空边），根本压不到人。
+  //   权重取 1/100 的含义：压住「整个 404×384 的宠物」≈ 1551 的代价，足够把
+  //   这种候选否决掉；压住一条 9 像素的边只有 36，远小于挪 440px 的代价。
   const anchor = clampPoint(candidate(order[0], petRect, size, gap), lim);
 
-  let bestFree = null;   // 不压住宠物的候选里最好的
-  let bestAny = null;    // 实在没得选时的兜底
+  let best = null;
   for (const side of order) {
     const c = candidate(side, petRect, size, gap);
     if (!c) continue;
     const p = clampPoint(c, lim);
-    // 曼哈顿距离：横向偏 + 纵向偏，越小越「贴着靶心」
     const d = Math.abs(p.x - anchor.x) + Math.abs(p.y - anchor.y);
-    const rec = { x: p.x, y: p.y, side, d };
-    if (!bestAny || d < bestAny.d) bestAny = rec;
-    if (!overlaps(p, size, petRect) && (!bestFree || d < bestFree.d)) bestFree = rec;
+    const score = d + overlapArea(p, size, petRect) / 100;
+    if (!best || score < best.score) best = { x: p.x, y: p.y, side, score };
   }
 
-  const best = bestFree || bestAny;
   return { x: Math.round(best.x), y: Math.round(best.y), side: best.side, clamped: true };
 }
 

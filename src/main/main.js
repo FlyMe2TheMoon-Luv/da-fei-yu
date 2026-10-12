@@ -1100,9 +1100,16 @@ async function runSettingsSelfTest() {
     ok(b.x !== centerX || b.y !== centerY,
       `★ 负对照：不再落在屏幕正中（正中是 ${centerX},${centerY}）`);
 
-    const overlap = b.x < petRect.x + petRect.width && b.x + b.width > petRect.x &&
-                    b.y < petRect.y + petRect.height && b.y + b.height > petRect.y;
-    ok(overlap === false, '没有把桌宠盖住');
+    // 「不许压住桌宠」写成了「不许**真的**盖住它」，因为允许压住一点点是有意的：
+    // 宠物停在屏幕右下角时，「正上方右对齐」只差 9 像素放不下，而唯一完全不压住
+    // 它的方位在屏幕左边（440px 外）。压住那 9 像素（其实还是角色外的透明边）
+    // 比被甩到屏幕另一头划算，所以 place.js 里是按面积算代价的（见 place.js 注释）。
+    // 这里给 5% 的上限：压住一点点可以，压住一大块不行。
+    const ovW = Math.max(0, Math.min(b.x + b.width, petRect.x + petRect.width) - Math.max(b.x, petRect.x));
+    const ovH = Math.max(0, Math.min(b.y + b.height, petRect.y + petRect.height) - Math.max(b.y, petRect.y));
+    const ovRatio = (ovW * ovH) / (petRect.width * petRect.height);
+    ok(ovRatio <= 0.05,
+      `★ 没有真的把桌宠盖住（压住面积占宠物的 ${(ovRatio * 100).toFixed(1)}%，上限 5%）`);
 
     const gx = Math.max(petRect.x - (b.x + b.width), b.x - (petRect.x + petRect.width), 0);
     const gy = Math.max(petRect.y - (b.y + b.height), b.y - (petRect.y + petRect.height), 0);
