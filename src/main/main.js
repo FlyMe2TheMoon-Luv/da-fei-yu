@@ -37,6 +37,7 @@ const WIN_H = 380;
 const STATE_FILE = 'window-state.json';
 
 let win = null;
+let petSize = null; // 桌宠窗口的标称外框尺寸，移动时必须连它一起写回（见 movePet）
 let tray = null;
 let quitting = false; // 真退出 vs 收进托盘，靠它区分
 let dragOffset = null; // 拖拽时鼠标相对窗口左上角的偏移
@@ -130,6 +131,15 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
+  // 记下这一刻的外框尺寸当「标称值」，之后每次移动都用它把尺寸掰回去。
+  // ⚠ 必须在 setAlwaysOnTop / setVisibleOnAllWorkspaces **之后**取：
+  //   这两个调用本身也会动窗口尺寸，先取会取到一个随后就变的数。
+  // 顺便注意：这里的 404×384 比 WIN_W×WIN_H（400×380）大 4 像素 ——
+  //   useContentSize 只管构造那一下，Windows 会给窗口补一圈看不见的边框。
+  //   所以移动时要用这个实测值，不能拿 WIN_W/WIN_H 去写。
+  petSize = win.getSize();
+  log(`桌宠窗口标称外框 ${petSize[0]}×${petSize[1]}（内容区标称 ${WIN_W}×${WIN_H}）`);
+
   win.loadFile(path.join(__dirname, '..', 'renderer', 'pet', 'index.html'));
 
   // 开发时把渲染进程的日志转发到终端，方便看加载进度和报错
@@ -188,6 +198,12 @@ function createWindow() {
     setTimeout(runFocusSelfTest, 1200);
   }
 
+  // 开发自检：按钮和桌宠的同步（见 runSyncSelfTest）。
+  // 盯「拖拽时窗口偷偷长大、按钮被顶右」这个回归。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'sync') {
+    setTimeout(runSyncSelfTest, 1200);
+  }
+
   // 位置变化就记下来
   win.on('moved', scheduleSavePosition);
 
@@ -211,6 +227,34 @@ function showPet() {
   win.setAlwaysOnTop(true, 'screen-saver');
 }
 
+// 移动桌宠窗口。
+//
+// ⚠ 必须用 setBounds 把尺寸**一起**写回去，不能只调 setPosition。
+//   起因（HANDOFF 第六节第 32 条）：主人报「拖拽时右上角的设置按钮会自动右移，
+//   跟角色对不上」。实测发现是窗口自己在长大 —— 这台机器是 1.5 倍缩放，
+//   setPosition() 每调一次，窗口外框就悄悄涨一点：
+//
+//     静止 404×384  →  拖拽中 422×403  →  拖完 443×424
+//
+//   而渲染进程的画布是启动时按当时的 innerWidth（404）定死的、之后不会跟着变，
+//   角色就钉在画布原来的位置不动；两个按钮是 `position:absolute; right:…`
+//   贴着窗口右边定位的 —— 窗口一宽，按钮就往右跑。
+//   于是「按钮越拖越往右、跟桌宠越离越远」。
+//
+//   尺寸用启动时记下的标称值（petSize），不用 getSize() 现读 ——
+//   现读会读到已经被撑大的值，越修越大。
+function movePet(x, y) {
+  if (!win || win.isDestroyed()) return;
+  const px = Math.round(x);
+  const py = Math.round(y);
+  if (petSize) {
+    win.setBounds({ x: px, y: py, width: petSize[0], height: petSize[1] });
+  } else {
+    // 还没记下标称尺寸（理论上不会发生）时退回旧行为，至少位置是对的
+    win.setPosition(px, py);
+  }
+}
+
 function togglePet() {
   if (!win || win.isDestroyed()) return createWindow();
   if (win.isVisible()) {
@@ -224,7 +268,7 @@ function togglePet() {
 function resetPosition() {
   if (!win || win.isDestroyed()) return;
   const { x, y } = defaultPosition();
-  win.setPosition(x, y);
+  movePet(x, y);
   savePosition();
 }
 
@@ -276,11 +320,12 @@ ipcMain.on('pet:drag-move', (_e, p) => {
   if (!win || win.isDestroyed() || !dragOffset) return;
   const tx = Math.round(p.x) - dragOffset.dx;
   const ty = Math.round(p.y) - dragOffset.dy;
-  win.setPosition(tx, ty);
+  movePet(tx, ty);   // 注意：这里不能用 setPosition，会把窗口撑大（见 movePet）
   // 自检时才记录，平时零开销
   if (dragProbe) {
     const [ax, ay] = win.getPosition();
-    dragProbe.moves.push({ reqX: p.x, reqY: p.y, tx, ty, ax, ay, at: Date.now() });
+    const [aw, ah] = win.getSize();
+    dragProbe.moves.push({ reqX: p.x, reqY: p.y, tx, ty, ax, ay, aw, ah, at: Date.now() });
   }
 });
 
@@ -548,7 +593,7 @@ async function runDragSelfTest() {
     }
 
     // 每轮之间把窗口挪回原处，保证起点一致
-    win.setPosition(wx0, wy0);
+    movePet(wx0, wy0);
     await sleep(300);
   }
 
@@ -833,6 +878,204 @@ async function runFocusSelfTest() {
   reminder.hideBubble('自检收尾');
 
   finishExitTest(pass, fail, '桌宠不抢焦点');
+}
+
+// ---------- 开发自检：按钮与桌宠的同步 ----------
+// 主人反馈：「按住桌宠拖动时（或者按住不动时），右上角的设置按钮会自动右移，
+// 跟角色对不上。」
+//
+// 根因（HANDOFF 第六节第 32 条）：拖拽时每收到一次 mousemove 就调一次
+// win.setPosition()。这台机器是 1.5 倍缩放，setPosition 会让窗口外框**每次**
+// 悄悄长大一点 —— 实测拖 40 步从 404×384 长到 443×424，还在继续长。
+// 渲染进程的画布是启动时按当时的 innerWidth（404）定死的、之后不会跟着变，
+// 角色就钉在原处；两个按钮是 `position:absolute; right:…` 贴着窗口右边定位的，
+// 窗口一宽按钮就往右跑 —— 越拖越远。
+// 改成 movePet()（用 setBounds 把尺寸一起写回去）之后不再长大。
+//
+// ⚠ 用「按钮中心」而不是 left/right 来量：
+//   按钮有 hover 和「呼吸」动画的 scale 变换，缩放绕中心做，
+//   只有中心点在变换下是不变的。拿 right 去比会被动画干扰成偶发失败。
+async function runSyncSelfTest() {
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}  ← 失败${extra}`); }
+  };
+
+  log('===== 按钮与桌宠同步自检开始 =====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
+
+  // 读渲染进程里「窗口可视区 / 画布 / 两个按钮」的状态
+  const readState = () => win.webContents.executeJavaScript(`(() => {
+    const center = (id) => {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return {
+        cx: Math.round((b.x + b.width / 2) * 100) / 100,
+        w: Math.round(b.width * 100) / 100,
+      };
+    };
+    const d = window.__petDebug;
+    const cv = d.app.view;
+    return {
+      innerW: window.innerWidth,
+      innerH: window.innerHeight,
+      canvasCssW: Math.round(cv.getBoundingClientRect().width * 100) / 100,
+      canvasPx: cv.width + 'x' + cv.height,
+      settings: center('btn-settings'),
+      exit: center('btn-exit'),
+    };
+  })()`);
+
+  // ⚠ 关键：量「按钮中心在屏幕坐标系里的 x」，**不能**量「离窗口右边界的距离」。
+  //   按钮是 `right: 46px` 定位的，所以「窗口宽 - 按钮中心 x」恒等于一个常数，
+  //   窗口再怎么长大它都不会变 —— 拿它当断言就是一条永远绿的假测试
+  //   （这条是写负对照时被抓出来的，见第 ④ 节）。
+  //   主人看到的是「按钮相对角色右移」，而角色钉在画布上（画布左上角锚定、
+  //   尺寸启动时就定死），所以只有**绝对坐标**能反映问题。
+  const btnCx = (s) => s.settings.cx;
+
+  // 合成一次拖拽（和拖拽自检同一套路：直接调 petAPI，绕开合成鼠标事件）
+  const dragOnce = async (steps) => {
+    const [wx0, wy0] = win.getPosition();
+    const sx = wx0 + 100;
+    const sy = wy0 + 100;
+    await win.webContents.executeJavaScript(`(async () => {
+      const api = window.petAPI;
+      const sx = ${sx}, sy = ${sy};
+      api.dragStart({ x: sx, y: sy });
+      for (let i = 1; i <= ${steps}; i++) {
+        api.dragMove({ x: sx + 3 * i, y: sy + 2 * i });
+        await new Promise((r) => setTimeout(r, 6));
+      }
+      api.dragEnd();
+      return true;
+    })()`);
+    await sleep(250);
+  };
+
+  // ===== ① 静止基准 =====
+  log('① 静止时的基准');
+  const base = await readState();
+  log(`   窗口可视区 ${base.innerW}×${base.innerH} · 画布 CSS 宽 ${base.canvasCssW} · 画布像素 ${base.canvasPx}`);
+  log(`   btn-settings 中心 x=${base.settings.cx} · btn-exit 中心 x=${base.exit.cx}`);
+  ok(Math.abs(base.canvasCssW - base.innerW) <= 1,
+    '★ 画布宽度和窗口可视区宽度一致（角色和按钮用同一套坐标）',
+    ` → 画布 ${base.canvasCssW} / 窗口 ${base.innerW}`);
+
+  // ===== ② 拖拽过程中窗口不能变大、按钮不能飘 =====
+  log('');
+  log('② 拖拽过程中');
+  {
+    // 边拖边采：不 await 这个 promise，让它跑着，我们从主进程去看
+    const running = (async () => {
+      const [wx0, wy0] = win.getPosition();
+      const sx = wx0 + 100;
+      const sy = wy0 + 100;
+      return win.webContents.executeJavaScript(`(async () => {
+        const api = window.petAPI;
+        const sx = ${sx}, sy = ${sy};
+        api.dragStart({ x: sx, y: sy });
+        for (let i = 1; i <= 40; i++) {
+          api.dragMove({ x: sx + 3 * i, y: sy + 2 * i });
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        api.dragEnd();
+        return true;
+      })()`);
+    })();
+
+    await sleep(220);
+    const during = await readState();
+    await running;
+    await sleep(300);
+    const after = await readState();
+
+    log(`   拖拽中：窗口可视区 ${during.innerW} · 按钮中心 x=${during.settings.cx}`);
+    log(`   拖拽后：窗口可视区 ${after.innerW} · 按钮中心 x=${after.settings.cx}`);
+
+    ok(during.innerW === base.innerW && after.innerW === base.innerW,
+      '★ 整个拖拽过程中窗口可视区宽度没有变（旧代码这里会从 404 涨到 443）',
+      ` → ${base.innerW} → ${during.innerW} → ${after.innerW}`);
+    ok(Math.abs(btnCx(during) - btnCx(base)) <= 0.75,
+      '★ 拖拽中按钮没有右移（在屏幕坐标里的位置不变）',
+      ` → ${btnCx(base)} → ${btnCx(during)}`);
+    ok(Math.abs(btnCx(after) - btnCx(base)) <= 0.75,
+      '★ 拖拽结束后按钮回到了原来的位置',
+      ` → ${btnCx(base)} → ${btnCx(after)}`);
+  }
+
+  // ===== ③ 反复拖拽不能累积 =====
+  log('');
+  log('③ 反复拖拽 3 轮（防「每拖一次涨一点」）');
+  const sizeAfterFirst = win.getSize();
+  await dragOnce(40);
+  const size1 = win.getSize();
+  await dragOnce(40);
+  await dragOnce(40);
+  const size3 = win.getSize();
+  const s3 = await readState();
+  log(`   第 1 轮后 ${size1.join('×')} · 第 3 轮后 ${size3.join('×')}（拖之前 ${sizeAfterFirst.join('×')}）`);
+  ok(size3[0] === size1[0] && size3[1] === size1[1],
+    '★ 拖第 3 轮和第 1 轮结束时的窗口尺寸一样（没有一次一次累积变大）',
+    ` → ${size1.join('×')} vs ${size3.join('×')}`);
+  ok(Math.abs(btnCx(s3) - btnCx(base)) <= 0.75,
+    '★ 拖完 3 轮，按钮还在原处',
+    ` → ${btnCx(base)} → ${btnCx(s3)}`);
+
+  // ===== ④ 负对照：证明这个自检真的能抓到问题 =====
+  // 不然后面全是 ✓ 也可能是「断言写松了」或者「窗口压根没动过」。
+  // 这里做两件事，缺一不可：
+  //   ㈠ 把控件层临时改回「贴窗口」的写法（模拟改造前），再用旧的 setPosition
+  //      搬 40 次窗口 —— 按钮必须真的右移。这一步同时证明：
+  //        · 自检抓得住「按钮右移」这个现象（不是一条永远绿的假测试）
+  //        · 「贴画布」这一层确实在起作用（拿掉它问题就复现）
+  //   ㈡ 换回正常写法后，movePet + syncUiBox 能把窗口和按钮都恢复原样。
+  log('');
+  log('④ ★ 负对照：把控件层改回「贴窗口」，再用旧的 setPosition 搬 40 次');
+  {
+    const before = await readState();
+    const [px, py] = win.getPosition();
+
+    // ㈠ 模拟改造前的写法：控件层跟窗口一样大（于是按钮跟着窗口一起变）
+    await win.webContents.executeJavaScript(`(() => {
+      const box = document.getElementById('ui');
+      box.style.width = '100%';
+      box.style.height = '100%';
+      return true;
+    })()`);
+    await sleep(120);
+    for (let i = 1; i <= 40; i++) {
+      win.setPosition(px + i, py + i);   // 旧写法：只改位置，不管尺寸
+    }
+    await sleep(250);
+    const broke = await readState();
+    log(`   旧写法 + 贴窗口：窗口可视区 ${before.innerW} → ${broke.innerW} · 按钮中心 x ${btnCx(before)} → ${btnCx(broke)}`);
+    ok(broke.innerW > before.innerW + 5,
+      '★ 负对照①：旧写法确实会把窗口撑大（说明自检抓得住「窗口变大」）',
+      ` → ${before.innerW} → ${broke.innerW}`);
+    ok(btnCx(broke) - btnCx(before) > 5,
+      '★ 负对照①：贴窗口时按钮确实会右移（正是主人看到的现象）',
+      ` → ${btnCx(before)} → ${btnCx(broke)}`);
+
+    // ㈡ 换回正常写法，两样都要能恢复
+    movePet(px, py);
+    await win.webContents.executeJavaScript('window.__petDebug.syncUiBox()');
+    await sleep(250);
+    const fixed = await readState();
+    log(`   恢复之后：窗口可视区 ${fixed.innerW} · 按钮中心 x ${btnCx(fixed)}`);
+    ok(Math.abs(fixed.innerW - before.innerW) <= 1,
+      '★ 负对照②：movePet 能把被撑大的窗口掰回标称尺寸',
+      ` → ${fixed.innerW}（期望 ${before.innerW}）`);
+    ok(Math.abs(btnCx(fixed) - btnCx(before)) <= 0.75,
+      '★ 负对照②：syncUiBox 能把按钮重新贴回角色身上',
+      ` → ${btnCx(fixed)}（期望 ${btnCx(before)}）`);
+  }
+
+  finishExitTest(pass, fail, '按钮与桌宠同步');
 }
 
 // ---------- 开发自检：调度引擎（端到端） ----------

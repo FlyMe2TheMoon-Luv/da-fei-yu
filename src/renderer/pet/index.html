@@ -41,6 +41,22 @@
     #hint.gone { opacity: 0; }
     #hint.error { color: #b91c1c; }
 
+    /* 界面控件层：尺寸由 renderer.js 的 syncUiBox() 对齐到画布。
+       ⚠ 为什么按钮不能直接贴窗口右边（原来就是那么写的）：
+         这台机器是 1.5 倍缩放，窗口外框尺寸会**随位置变**（实测停在 1259,639 时是
+         404×384，停在 1087,618 时是 404×382 —— Windows 的 DPI 取整）。
+         而渲染进程的画布是启动时按当时尺寸定死的、之后不会跟着变，
+         角色就钉在原处。按钮如果贴窗口右边定位，窗口一宽/一窄就跟角色错位 ——
+         主人报的「拖拽时设置按钮自动右移」就是这么来的（HANDOFF 第六节第 32 条）。
+         套一层跟画布同尺寸的容器之后，按钮永远跟角色锁在一起。 */
+    #ui {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;   /* 空白处照旧穿过去点桌面；按钮自己再打开 */
+    }
+    #ui > button { pointer-events: auto; }
+
     /* 右上角两个小按钮：日程管理 / 退出。
        ⚠ 它们不在 WebGL 画布上，所以鼠标穿透的「读像素」判定看不见它们。
        必须靠 renderer.js 里 elementFromPoint 那条兜底逻辑，否则点不到。
@@ -89,14 +105,17 @@
   <div id="stage"></div>
   <div id="hint">加载中…</div>
 
-  <button id="btn-settings" data-ui="1" title="日程管理" aria-label="日程管理">
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
-         stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="8" cy="8" r="6.1" />
-      <path d="M8 4.5V8l2.4 1.6" />
-    </svg>
-  </button>
-  <button id="btn-exit" data-ui="1" title="退出桌宠" aria-label="退出桌宠">✕</button>
+  <!-- 控件层：尺寸跟画布一致，按钮贴在它里面而不是贴在窗口上 -->
+  <div id="ui">
+    <button id="btn-settings" data-ui="1" title="日程管理" aria-label="日程管理">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="8" r="6.1" />
+        <path d="M8 4.5V8l2.4 1.6" />
+      </svg>
+    </button>
+    <button id="btn-exit" data-ui="1" title="退出桌宠" aria-label="退出桌宠">✕</button>
+  </div>
 
   <!-- 顺序不能变：PIXI → Cubism Core → pixi-live2d-display -->
   <script src="./vendor/pixi.min.js"></script>

@@ -44,6 +44,26 @@ const EXPRESSIONS = ['爱心眼', '星星眼', '脸红', '吐舌', '调皮', '�
 const hint = document.getElementById('hint');
 const log = (m) => console.log('[pet] ' + m);
 
+// 把界面控件层（#ui）的尺寸对齐到画布，让按钮贴着**角色**而不是贴着窗口。
+//
+// 起因：主人报「按住桌宠拖动时，右上角的设置按钮会自动右移，跟角色对不上」。
+// 根因见 HANDOFF 第六节第 32 条：1.5 倍缩放下窗口外框尺寸会随位置/系统调用变化
+// （实测 404×384 ↔ 404×382，拖拽时还会一路涨到 443×424），
+// 而画布是这里启动时按当时尺寸定死的、之后不会跟着变 —— 角色钉在原处，
+// 按钮贴窗口右边定位就会越飘越远。
+//
+// 主进程那边已经用 movePet() 把窗口尺寸钉死了（治本）；
+// 这一层是**双保险**：只要按钮贴着画布，窗口再怎么变都不会错位。
+function syncUiBox() {
+  const box = document.getElementById('ui');
+  if (!box) return;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  box.style.width = w + 'px';
+  box.style.height = h + 'px';
+  log(`控件层对齐到画布 ${w}×${h}`);
+}
+
 function setHint(text, isError = false) {
   if (!hint) return;
   hint.textContent = text;
@@ -201,6 +221,7 @@ function setupReminder(model) {
     app.ticker.maxFPS = FPS_CAP;
     stageEl.appendChild(app.view);
     log(`画布 ${app.view.width}×${app.view.height}（CSS ${window.innerWidth}×${window.innerHeight}，倍率 ${app.renderer.resolution}）`);
+    syncUiBox();
 
     // ===== 3. 加载模型 =====
     const t0 = performance.now();
@@ -229,6 +250,7 @@ function setupReminder(model) {
     // 只是把本地对象挂出来，不增加任何权限。
     window.__petDebug = {
       app, model, measureLocalBounds, edgeHits, EXPRESSIONS, frameGap, frameGapStats,
+      syncUiBox,   // 自检用：把控件层重新对齐到画布
       hitState: interactions.getHitState, // 自检用：看穿透判定和鼠标压在哪
       // 自检用：某个坐标上的画布 alpha（判断「这里是不是角色本体」）
       hitTestPoint: (x, y) => {
