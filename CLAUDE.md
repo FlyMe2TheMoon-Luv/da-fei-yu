@@ -2,7 +2,7 @@
 
 > 这份文件是给 AI（Claude / WorkBuddy 等）看的项目说明书。
 > **动手写代码前先读它。** 它决定了后续实现会不会跑偏。
-> 最后更新：2026-10-12（阶段 2 全部完成 + 主人反馈的三处小修之后）
+> 最后更新：2026-10-12（阶段 2 全部完成 + 主人反馈的三处小修 + 桌面双击快捷方式）
 
 ---
 
@@ -65,15 +65,21 @@ desktop-pet/
 │  │  ├─ bubble/          提醒气泡（阶段 2-3）：透明小窗口 268×112
 │  │  └─ settings/        日程管理（阶段 2-4）：普通窗口，列表 + 表单
 │  └─ assets/             静态图片、音效
-│     ├─ pet/             三视图 PNG + icon
+│     ├─ pet/             三视图 PNG + icon + 桌宠.ico（多尺寸图标，由 make-launcher 生成）
 │     └─ tray.png         托盘图标（由 make-tray-icon 生成）
+├─ launcher/              桌面快捷方式的「备胎」（**必须纯 ASCII**，见第六节）
+│  ├─ start-pet.bat       双击启动（.lnk 坏了时用）
+│  ├─ stop-pet.bat        双击停止
+│  └─ start-pet.vbs / stop-pet.vbs  把上面两个 .bat 藏起来跑（不闪黑框）
 ├─ scripts/               开发工具（都不是运行时依赖）
 │  ├─ start-dev.js        启动器：抹平环境坑
 │  ├─ sync-vendor.js      同步第三方运行时到 vendor/
 │  ├─ check-assets.js     素材体检：验图片是不是真透明
 │  ├─ make-tray-icon.js   生成方形托盘图标
+│  ├─ make-launcher.js    生成图标 + 桌面双击快捷方式（**两种身份**，见第六节）
 │  ├─ shot.js             截屏（验收用）
 │  ├─ test-place.js       窗口摆放位置自检（纯 Node，不依赖 Electron）
+│  ├─ test-quit.js        「停止桌宠」端到端自检（纯 Node，含负对照）
 │  └─ lib/png.js          零依赖 PNG 解码/编码
 └─ spike/                 一次性验证台，可随时删（见 spike/README.md）
 ```
@@ -181,6 +187,28 @@ desktop-pet/
     一票否决会把窗口甩到 440px 外的屏幕左边）。
     逻辑在 `src/main/place.js`（纯函数，`npm run test:place` 穷举 797 种位置验证）。
     详见 `HANDOFF.md` 第六节第 29 条。
+24. **⚠ 生成 `.bat` / `.vbs` 时绝对不能写中文，连注释都不行** ——
+    cmd.exe 按**系统 ANSI 代码页**（中文系统 = GBK）读 `.bat`，而文件通常是 UTF-8，
+    中文变乱码后可能带出引号/重定向符号，**把后面几行命令一起带崩**
+    （症状：报一堆「'xx' 不是内部或外部命令」然后啥也没执行）。
+    → `launcher/` 里的文件全部纯 ASCII，**连文件名都用英文**
+      （因为 `.vbs` 里要写 `.bat` 的文件名，WSH 同样按 ANSI 读）。
+      桌面上的图标名是中文没问题 —— NTFS 文件名走 Unicode。
+    → `make-launcher.js` 生成后会逐字符自检，出现非 ASCII 直接抛错。
+25. **⚠ 桌面可能是 OneDrive 重定向的，别自己拼路径** ——
+    这台机器上 `%USERPROFILE%\Desktop` **根本不存在**，真实桌面在
+    `C:\Users\FlyMe\OneDrive\Desktop`。一律用 `app.getPath('desktop')`。
+26. **生成 `.lnk` 用 Electron 的 `shell.writeShortcutLink`，别自己拼 MS-SHLLINK 二进制**。
+    它必须跑在 Electron 里，所以 `scripts/make-launcher.js` 有「两种身份」：
+    普通 Node 先做图标和备胎脚本，再 `spawn` electron 把自己跑第二遍写 `.lnk`。
+    spawn 之前**必须删掉 `ELECTRON_RUN_AS_NODE`**。
+    写完用 `shell.readShortcutLink()` 读回来对参数（比肉眼检查靠谱）。
+27. **「停止桌宠」不要用 `taskkill /IM electron.exe`** ——
+    会误杀机器上所有 Electron 程序，而且强杀不给程序收尾机会
+    （专注模式改过 hosts 就还原不回来）。
+    正确做法：再启动一次自己 + `--pet-quit`，已运行的实例在 `second-instance`
+    里收到后 `app.quit()`（见 `src/main/main.js` 的 `QUIT_FLAG`）。
+    回归哨兵：`npm run test:quit`（8 项，含 2 组负对照）。
 
 ---
 
@@ -189,12 +217,14 @@ desktop-pet/
 ```bash
 npm start                    # 启动桌宠（开发）
 npm start -- --no-gpu        # 无 GPU 沙箱环境用这条
+npm run make-launcher        # 生成桌面上的「启动桌宠 / 停止桌宠」双击快捷方式
 npm run test:schedules       # 日程数据层自检（阶段 2-1，独立脚本，随时能跑）
 npm run test:scheduler       # 调度引擎自检（阶段 2-2，纯逻辑、秒出结果）
 npm run test:reminder        # 气泡位置自检（阶段 2-3，纯数学、秒出结果）
 npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）
 npm run test:place           # 窗口摆放位置自检（纯数学、秒出结果）
 npm run test:settings-e2e    # 日程管理窗口端到端（会真的开窗口、写一条日程再删掉）
+npm run test:quit            # 「停止桌宠」端到端自检（独立脚本，含负对照）
 npm run test:focus           # 桌宠不抢焦点自检（回归哨兵）
 npm run test:gaze            # 拖拽时视线跟随开关自检（回归哨兵，桌宠开着也能跑）
 npm run test:exit            # 退出按钮自检（回归哨兵）

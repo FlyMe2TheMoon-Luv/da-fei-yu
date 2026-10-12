@@ -71,14 +71,22 @@
 
 | 反馈 | 改了什么 | 回归哨兵 |
 |---|---|---|
-| 设置窗口丢在屏幕正中，离桌宠太远；要「靠近桌宠的右上方」 | 新增纯函数 `src/main/place.js`，`settings-window.js` 用它摆位置 | `npm run test:place`（33 项） |
+| 设置窗口丢在屏幕正中，离桌宠太远；要「靠近桌宠的右上方」 | 新增纯函数 `src/main/place.js`，`settings-window.js` 用它摆位置 | `npm run test:place`（37 项） |
 | 桌宠右上角按钮不显眼、找不到 | 按钮 26→30px、不透明度 .38→.95、加白色描边、图标上色、启动「呼吸」三下 | `npm run test:exit` + 人工看图 |
 | 打字时桌宠抢焦点 | 桌宠窗口 `focusable: false` + 所有显示改走 `showInactive()` | `npm run test:focus`（20 项） |
 
 改完跑的**全套回归**（全绿）：
 `test:schedules` 46 · `test:scheduler` 39 · `test:reminder` 14 · `test:place` 37 ·
 `test:exit` 6 · `test:gaze` 6 · `test:drag` 通过 · `test:focus` 20 ·
-`test:reminder-e2e` 19 · `test:scheduler-e2e` 通过 · `test:settings-e2e` 44
+`test:reminder-e2e` 19 · `test:scheduler-e2e` 通过 · `test:settings-e2e` 45
+
+### 再一条：「双击就能开桌宠」（2026-10-12 深夜，已完成）
+
+主人要求「不依赖小安、自己双击就能开关桌宠」。产出了：
+- `npm run make-launcher` → 桌面生成「启动桌宠 / 停止桌宠」两个快捷方式（带角色图标）
+- `src/main/main.js` 新增 `--pet-quit`：让已运行的实例优雅退出（不 taskkill）
+- `launcher/` 备胎脚本 + `scripts/test-quit.js`（8 项，含 2 组负对照）
+- 细节和踩坑见第四节「桌面上的双击快捷方式」+ 第六节第 31 条
 
 ### 真实目录结构（截至 2026-10-12，✅ = 已存在）
 
@@ -120,18 +128,25 @@ desktop-pet/
 │  │     └─ settings.js    ✅ 列表渲染 / 表单 / 开关 / 两下删除
 │  └─ assets/
 │     ├─ pet/              ✅ 三视图 PNG ×6 + icon.png（**当前没用到**，备用）
+│     │                       + 桌宠.ico（多尺寸图标，由 make-launcher 生成）
 │     └─ tray.png          ✅ 32×32 托盘图标（由 make-tray-icon 生成）
+├─ launcher/               ✅ 桌面快捷方式的「备胎」（全 ASCII，见第六节第 31 条）
+│  ├─ start-pet.bat        ✅ 双击启动（.lnk 坏了时用）
+│  ├─ stop-pet.bat         ✅ 双击停止
+│  └─ start-pet.vbs / stop-pet.vbs  ✅ 把上面两个 .bat 藏起来跑（不闪黑框）
 ├─ scripts/                ← 开发工具，都不是运行时依赖
 │  ├─ start-dev.js         ✅ 启动器：抹平环境坑
 │  ├─ sync-vendor.js       ✅ 同步第三方运行时到 vendor/
 │  ├─ patch-model-expressions.js  ✅ 补登记模型表情（见第六节第 19 条）
 │  ├─ check-assets.js      ✅ 素材体检：验图片是不是真透明
 │  ├─ make-tray-icon.js    ✅ 生成方形托盘图标
+│  ├─ make-launcher.js     ✅ 生成图标 + 桌面双击快捷方式（两种身份，见第 31 条）
 │  ├─ shot.js              ✅ 截屏（验收用）
 │  ├─ test-schedules.js    ✅ 阶段 2-1 数据层自检（46 项，含负对照）
 │  ├─ test-scheduler.js    ✅ 阶段 2-2 调度引擎自检（39 项，含负对照）
 │  ├─ test-reminder.js     ✅ 阶段 2-3 气泡位置自检（14 项，含负对照）
-│  ├─ test-place.js        ✅ 窗口摆放位置自检（33 项，含 4 组负对照）
+│  ├─ test-place.js        ✅ 窗口摆放位置自检（37 项，含 4 组负对照）
+│  ├─ test-quit.js         ✅ 「停止桌宠」端到端自检（8 项，含 2 组负对照）
 │  └─ lib/png.js           ✅ 零依赖 PNG 解码/编码/裁切/缩放
 └─ spike/                  ← 一次性验证台，可随时删（见 spike/README.md）
 ```
@@ -144,6 +159,7 @@ desktop-pet/
 npm start                    # 标准启动（经启动器，自动处理 ELECTRON_RUN_AS_NODE）
 npm start -- --no-gpu        # ★ 本机沙箱无 GPU，用这条
 npm run start:raw            # 裸 electron .（不经启动器，排查用）
+npm run make-launcher        # 生成桌面上的「启动桌宠 / 停止桌宠」双击快捷方式
 npm run shot                 # 截一张桌面图存到 tmp/，肉眼验收用
 npm run build                # 打包（electron-builder，阶段 5 才用）
 ```
@@ -158,8 +174,9 @@ npm run test:scheduler       # 调度引擎自检（阶段 2-2，39 项，纯逻
 npm run test:scheduler-e2e   # 调度引擎端到端（真的塞一条日程，等 30 秒轮询扫到它）
 npm run test:reminder        # 气泡位置自检（阶段 2-3，14 项，纯数学、秒出结果）
 npm run test:reminder-e2e    # 提醒呈现端到端（19 项；⚠ 会真的弹一条系统通知）
-npm run test:place           # 窗口摆放位置自检（33 项，纯数学、秒出结果）
-npm run test:settings-e2e    # 日程管理窗口端到端（44 项；会真的开窗口、写一条日程再删掉）
+npm run test:place           # 窗口摆放位置自检（37 项，纯数学、秒出结果）
+npm run test:settings-e2e    # 日程管理窗口端到端（45 项；会真的开窗口、写一条日程再删掉）
+npm run test:quit            # 「停止桌宠」端到端（8 项，见第六节第 31 条）
 npm run test:focus           # 桌宠不抢焦点自检（20 项，见第六节第 26 条）
 npm run test:gaze            # 拖拽时「视线跟随」开关自检（6 项，见第六节第 20 条）
 npm run test:exit            # 退出按钮自检（6 项，见第六节第 21 条）
@@ -172,14 +189,36 @@ npm run make-tray-icon       # 换形象后重新生成托盘图标
 > 托盘里跑着的时候再启动一次会直接退出，自检根本不会执行（容易误判成"通过"）。
 > 这个脚本把 userData 指到临时目录，**不会碰主人真实的日程数据**。
 >
-> `test:gaze` / `test:drag` 也是 Electron 自检，靠 `--isolated` 参数拿到独立的
-> user-data-dir，所以**桌宠开着的时候也能跑**，跑完自动退出。
+> `test:gaze` / `test:drag` / `test:quit` 也是独立脚本或带 `--isolated` 的自检，
+> 靠独立的 user-data-dir 跑，所以**桌宠开着的时候也能跑**，跑完自动退出。
 
 **开发自检**：`PET_SELFTEST=1 npm start -- --no-gpu`
 会自动验一遍「鼠标穿透切换」和「表情能不能用」，结果打在终端日志里。
 
-**关掉桌宠**：它常驻托盘，`Ctrl+C` 终端或任务管理器结束 `electron.exe` 都行；
-正规退出走托盘右键菜单的「退出桌宠」。
+### 桌面上的双击快捷方式（2026-10-12 加）
+
+主人不依赖小安、不依赖 npm，双击就能开关桌宠。由 `npm run make-launcher` 生成：
+
+| 桌面图标 | 实际做的事 |
+|---|---|
+| `启动桌宠.lnk` | `electron.exe "<项目目录>" --disable-gpu --enable-unsafe-swiftshader --no-sandbox --disable-gpu-process-crash-limit` |
+| `停止桌宠.lnk` | `electron.exe "<项目目录>" --pet-quit` |
+
+- 直接指向 `electron.exe`（GUI 程序），所以双击**不闪黑框**，也不经过脚本引擎。
+- 「停止」不是 taskkill，而是「再启动一次自己 + `--pet-quit`」，由**已经开着的那个实例**
+  在 `second-instance` 事件里优雅退出（见 `src/main/main.js` 的 `QUIT_FLAG`）。
+  好处：不会误杀别的 Electron 程序，退出流程和点托盘菜单「退出」完全一样
+  （专注模式改过 hosts 能正常还原）。
+- 备胎在 `launcher/` 里：`start-pet.bat` / `stop-pet.bat`（纯文本，记事本能打开看）
+  以及对应的 `.vbs`（把 .bat 藏起来跑，同样不闪框）。
+  这两个 `.bat` 额外多清一个环境变量 `ELECTRON_RUN_AS_NODE`（见第六节第 7 条），
+  所以**连 VS Code 集成终端里跑都不会中招**。
+- 项目挪位置 / 改名之后，重新跑一次 `npm run make-launcher` 即可。
+
+**关掉桌宠**（三条路都行）：
+1. 双击桌面上的「停止桌宠」
+2. 托盘右键菜单的「退出桌宠」
+3. 桌宠身上的 ✕ 按钮（悬停时出现）
 
 ---
 
@@ -430,6 +469,60 @@ npm run make-tray-icon       # 换形象后重新生成托盘图标
     - 顺带发现：`getBoundingClientRect()` 在动画期间量到的是**放大后**的尺寸
       （实测 33×33 而不是 30×30）。因为缩放是绕中心做的，**中心点不变**，
       所以自检里按中心点算坐标仍然稳定，不会因此变成偶发失败。
+
+31. **做「双击启动」快捷方式踩到的四个坑**（2026-10-12）
+    主人要求「不依赖小安、双击就能开桌宠」。最终方案见第四节，
+    这里只记踩过的地方：
+
+    **① `.bat` 文件里绝对不能写中文 —— 连注释都不行。**
+    cmd.exe 是按**系统 ANSI 代码页**（中文系统 = GBK/936）读 `.bat` 的，
+    而我们用编辑器/工具生成的文件是 **UTF-8**。中文注释会变成乱码，
+    乱码里还可能带出引号或重定向符号，**把后面几行命令一起带崩**。
+    实测症状：整个脚本报一堆 `'xx' 不是内部或外部命令`，然后什么都没执行。
+    → 结论：`launcher/` 里的文件**全部只用 ASCII**，连**文件名**都用英文
+      （因为 `.vbs` 里要写 `.bat` 的文件名，而 WSH 同样按 ANSI 读 `.vbs`）。
+      桌面上的图标名是中文没问题 —— 那是 NTFS 文件名，走 Unicode。
+    → `make-launcher.js` 里加了自检：生成后逐字符检查，出现非 ASCII 直接抛错。
+
+    **② 桌面可能是 OneDrive 重定向的，不能自己拼路径。**
+    主人这台机器上 `%USERPROFILE%\Desktop` **根本不存在**，
+    真实桌面在 `C:\Users\FlyMe\OneDrive\Desktop`。
+    一律用 `app.getPath('desktop')`（它会问系统要真实位置），别用 `os.homedir() + '\Desktop'`。
+
+    **③ 生成 `.lnk` 用 Electron 的 `shell.writeShortcutLink`，别自己拼二进制。**
+    `.lnk` 是 MS-SHLLINK 二进制格式（含 Shell Item IDList，很繁琐）。
+    Electron 自带这个 API，而且**实测生成的快捷方式真的能双击启动桌宠**
+    （验证方法：`cmd /c start "" "<xxx>.lnk"` 然后数 `electron.exe` 进程，
+    从 0 变成 4 个）。写完还能用 `shell.readShortcutLink()` 读回来对参数，
+    比肉眼检查靠谱。
+    ⚠ 但**生成 `.lnk` 必须跑在 Electron 里**，所以 `make-launcher.js` 有「两种身份」：
+    先用普通 Node 生成图标和备胎脚本，再 `spawn` 一个 electron 把自己跑第二遍。
+    第二遍 spawn 之前**必须删掉 `ELECTRON_RUN_AS_NODE`**（见下面第 7 条）。
+
+    **④ 「停止桌宠」不要用 taskkill，用「第二实例通知第一实例」。**
+    `taskkill /F /IM electron.exe` 会把机器上**所有** Electron 程序一起杀掉
+    （以后装了别的 Electron 软件就误伤），而且强杀不给程序收尾的机会
+    （专注模式改过 hosts 就还原不回来了）。
+    改成：快捷方式就是**再启动一次自己 + `--pet-quit`**，已经开着的那个实例在
+    `second-instance` 事件里收到这个参数 → `app.quit()`，退出流程和点托盘
+    「退出桌宠」完全一样。
+    ⚠ 参数名别用 `--quit` 这种通用词，怕被 Chromium 自己的开关吃掉；
+      用了 `--pet-quit`。
+    ⚠ 「没在跑的时候点停止」也要处理：拿得到锁说明本来就没实例，
+      这时要**在 `createWindow()` 之前**就退出，否则会先闪一下窗口再消失。
+    - 回归哨兵：**`npm run test:quit`（8 项）**，纯 Node 脚本，含 2 组负对照：
+      · 「不带 `--pet-quit` 再启动一次」→ 新实例自己退、**桌宠本体必须还活着**
+        （防止「桌宠压根没启动成功」也算通过 —— 那种假绿）
+      · 「没在跑时带 `--pet-quit`」→ 必须安静退出，不能卡住
+
+    **⑤ 排查期的一个环境陷阱：从集成终端里测会假失败。**
+    小安的 IDE 终端里带着 `ELECTRON_RUN_AS_NODE=1`，会**继承给 cmd 和它启动的
+    electron**，于是 electron 退化成普通 Node 直接崩（`app is undefined`，即第 7 条）。
+    现象是「双击快捷方式没反应」，很容易误判成快捷方式做错了。
+    排查办法：`env -u ELECTRON_RUN_AS_NODE cmd /c ...`。
+    （主人从资源管理器双击**不会**有这个变量，所以真实使用不受影响。）
+    另外：`cmd /c xxx.bat | head -5` 这种**管道会让分离出去的进程起不来**，
+    测 `.bat` 时别接管道，直接重定向到文件。
 
 ---
 

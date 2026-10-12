@@ -5,9 +5,18 @@
 - 位置：`C:\Users\FlyMe\WorkBuddy AI\desktop-pet\`（2026-10-12 从时间戳目录迁来，旧的已弃用）。方案文档 `PLAN.md`，AI 说明书 `CLAUDE.md`。
 - 进度：**阶段 0、1、2 全部完成**（2-1 数据层 ✅ / 2-2 调度引擎 ✅ / 2-3 提醒呈现 ✅ / 2-4 编辑入口 ✅）。
   阶段 2 之后又按主人反馈做了三处小修（设置窗口摆位 / 按钮更显眼 / 桌宠不抢焦点），也已完成。
+  另加了「桌面双击快捷方式」（主人不依赖小安也能开关桌宠），也已完成。
   **下一步：阶段 3 专注模式**（唯一需要管理员权限的模块）。
 - 启动：统一 `npm start`（经 `scripts/start-dev.js` 启动器）。无 GPU 环境用 `npm start -- --no-gpu`。
+  **主人自己用**：双击桌面上的「启动桌宠」/「停止桌宠」（由 `npm run make-launcher` 生成，
+  生成器是 `scripts/make-launcher.js`）。备胎在 `launcher/`。
+  「停止」走 `--pet-quit`（第二实例通知第一实例优雅退出），**不是 taskkill**。
 - 开发环境坑（启动器已内置规避）：`ELECTRON_RUN_AS_NODE=1` 会让 electron 退化成 Node 报 `whenReady undefined`；无 GPU 时 GPU 进程会崩溃。
+- **Windows 脚本编码坑**：`.bat` / `.vbs` 里**绝对不能写中文，连注释都不行**
+  （解释器按 GBK 读，UTF-8 中文会乱码并把后面几行命令带崩），连文件名都用英文。
+- **桌面是 OneDrive 重定向的**：`%USERPROFILE%\Desktop` 不存在，真实桌面在
+  `C:\Users\FlyMe\OneDrive\Desktop`。取桌面路径一律用 `app.getPath('desktop')`。
+- **生成 `.lnk` 用 Electron 的 `shell.writeShortcutLink`**，别自己拼 MS-SHLLINK 二进制。
 - 技术栈（已定，不要随意更换）：Electron + 原生 HTML/CSS/JS + electron-builder。
 - **形象方案已定：路线 A —— 现成真 Live2D 模型**（女仆鲸鱼娘 `c_0120`）。
   - 模型在 `src/renderer/pet/model/`（属「素材」，受 CC BY-NC-SA 4.0 约束）。
@@ -20,9 +29,10 @@
 - 模块划分：A 桌宠外壳 / B 日程提醒 / C 专注模式 / D 设置界面，四者解耦。
 - 目录约定：`src/main`（主进程，碰系统）、`src/renderer`（界面，不碰系统）、`src/assets`（静态图片）、`scripts/`（开发工具）。
 - 开发工具：`npm run shot`（截图验收）/ `check-assets`（验图片真透明）/ `make-tray-icon` / `sync-vendor` /
+  `make-launcher`（生成桌面双击快捷方式 + 图标）/
   `test:schedules`（46）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
-  `test:exit`（6）/ `test:gaze`（6）/ `test:drag` / `test:focus`（20）/
-  `test:reminder-e2e`（19）/ `test:scheduler-e2e` / `test:settings-e2e`（44）。
+  `test:exit`（6）/ `test:gaze`（6）/ `test:drag` / `test:focus`（20）/ `test:quit`（8）/
+  `test:reminder-e2e`（19）/ `test:scheduler-e2e` / `test:settings-e2e`（45）。
 - 阶段 2 已拍板：**提醒气泡用独立小窗口**（贴宠物旁，可放按钮）；**错过 5 分钟内补、超过不补**。
 - **界面控件约定**：往桌宠界面加任何 DOM 控件（按钮等）**必须挂 `data-ui` 属性**，
   否则穿透判定（只读 WebGL 像素）会把它当空白区域，控件**静默点不到**（HANDOFF 坑 21）。
