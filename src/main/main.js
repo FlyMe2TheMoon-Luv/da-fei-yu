@@ -15,6 +15,8 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen } = require('electron');
 const path = require('path');
 const store = require('./store');
+const schedules = require('./schedules');
+const scheduler = require('./scheduler');
 
 const log = (m) => console.log('[main] ' + m);
 
@@ -31,6 +33,7 @@ let win = null;
 let tray = null;
 let quitting = false; // 真退出 vs 收进托盘，靠它区分
 let dragOffset = null; // 拖拽时鼠标相对窗口左上角的偏移
+let dragProbe = null;  // 拖拽自检用：非 null 时逐次记录（见 runDragSelfTest）
 let saveTimer = null;
 
 // ---------- 位置记忆 ----------
@@ -133,6 +136,27 @@ function createWindow() {
     setTimeout(runInputSelfTest, 4000);
   }
 
+  // 开发自检：合成一次拖拽，量「拖动卡顿」问题（见 runDragSelfTest）。
+  // 注意：桌宠是单实例程序，跑这个要另给一个 user-data-dir，否则会被已有实例顶掉。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'drag') {
+    setTimeout(runDragSelfTest, 800);
+  }
+
+  // 开发自检：拖拽时「视线跟随」有没有真的关掉（见 runGazeSelfTest）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'gaze') {
+    setTimeout(runGazeSelfTest, 800);
+  }
+
+  // 开发自检：退出按钮（见 runExitButtonSelfTest）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'exit') {
+    setTimeout(runExitButtonSelfTest, 800);
+  }
+
+  // 开发自检：调度引擎端到端（见 runSchedulerSelfTest）。要等 30 秒轮询，慢一点。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'scheduler') {
+    setTimeout(runSchedulerSelfTest, 1200);
+  }
+
   // 位置变化就记下来
   win.on('moved', scheduleSavePosition);
 
@@ -214,7 +238,14 @@ ipcMain.on('pet:drag-start', (_e, p) => {
 
 ipcMain.on('pet:drag-move', (_e, p) => {
   if (!win || win.isDestroyed() || !dragOffset) return;
-  win.setPosition(Math.round(p.x) - dragOffset.dx, Math.round(p.y) - dragOffset.dy);
+  const tx = Math.round(p.x) - dragOffset.dx;
+  const ty = Math.round(p.y) - dragOffset.dy;
+  win.setPosition(tx, ty);
+  // 自检时才记录，平时零开销
+  if (dragProbe) {
+    const [ax, ay] = win.getPosition();
+    dragProbe.moves.push({ reqX: p.x, reqY: p.y, tx, ty, ax, ay, at: Date.now() });
+  }
 });
 
 ipcMain.on('pet:drag-end', () => {
@@ -321,6 +352,355 @@ async function checkExpressions() {
   }
 }
 
+// ---------- 日程提醒 ----------
+
+// 2-2 只做到「终端打印」——气泡、表情动作、系统通知是 2-3 的事。
+// lastFired 是给自检看的：判断「到底响没响」，而不是靠肉眼看日志。
+const lastFired = [];
+
+function fmtClock(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function onScheduleDue(item, target) {
+  lastFired.push({ id: item.id, title: item.title, at: target });
+  log(`该提醒了：${item.title}（日程 ${item.time}，实际到点 ${fmtClock(target)}）`);
+}
+
+// ---------- 开发自检：拖拽 ----------
+// 量三件事（对应「拖动窗口时人物卡顿抽搐」）：
+//   ① 一次拖拽让窗口搬了多少次 —— 现在是一比一，mousemove 多少次就搬多少次
+//   ② 坐标链路准不准 —— 渲染进程报的 screenX 和「鼠标真实屏幕位置」差多少
+//   ③ 拖拽期间掉不掉帧 —— 帧间隔中位/最大，和安静时的基线对比
+//
+// 做法：让渲染进程直接调拖拽接口（petAPI.dragStart / dragMove / dragEnd），
+// 主进程照常搬窗口 —— 窗口是**真的在动**，所以量到的代价是真的。
+// ⚠ 不用 sendInputEvent 合成鼠标事件：实测 Electron 合成的鼠标事件里
+//   screenX/screenY 恒为 0（不是真实屏幕坐标），测出来的东西是假的。
+//
+// 用法：PET_SELFTEST=drag npm start -- --no-gpu --user-data-dir=<临时目录>
+// （桌宠是单实例程序，必须另给 user-data-dir，否则会被已在运行的实例顶掉）
+// 可选：DRAG_TEST_HZ=125,500,0 指定要测的「鼠标上报频率」，0 表示连续发（极端情况）
+
+const DRAG_TEST_RATES = (process.env.DRAG_TEST_HZ || '125,500,0')
+  .split(',')
+  .map((s) => Number(s.trim()))
+  .filter((n) => Number.isFinite(n));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function waitForPet(timeoutMs = 25000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const ready = await win.webContents.executeJavaScript('!!(window.__petDebug && window.__petDebug.model)');
+      if (ready) return true;
+    } catch { /* 还没就绪，继续等 */ }
+    await sleep(300);
+  }
+  return false;
+}
+
+function quitAfterDragTest() {
+  log('===== 拖拽自检结束 =====');
+  setTimeout(() => app.quit(), 300);
+}
+
+function statOf(arr) {
+  if (!arr || !arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  return {
+    n: arr.length,
+    med: s[Math.floor(s.length / 2)],
+    p90: s[Math.floor(s.length * 0.9)],
+    max: s[s.length - 1],
+    over50: arr.filter((g) => g > 50).length,
+  };
+}
+
+// 安静时先采一段帧间隔当基线
+async function sampleBaseline(ms) {
+  await win.webContents.executeJavaScript(
+    '(() => { const d = window.__petDebug; d.frameGap.samples = []; d.frameGap.on = true; return true; })()'
+  );
+  await sleep(ms);
+  return win.webContents.executeJavaScript(
+    '(() => { const d = window.__petDebug; d.frameGap.on = false; return d.frameGap.samples; })()'
+  );
+}
+
+async function runDragSelfTest() {
+  const STEPS = 60;
+  const DX = 3;
+  const DY = 2;
+
+  log('===== 拖拽自检开始 =====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪（模型没加载出来？）'); return quitAfterDragTest(); }
+  log(`渲染进程就绪 · 每轮 ${STEPS} 步 · 总位移 ${DX * STEPS}×${DY * STEPS}`);
+
+  // ① 基线：窗口不动
+  const base = statOf(await sampleBaseline(1500));
+  if (base) {
+    log(`【基线·窗口不动】帧间隔 中位 ${base.med.toFixed(1)}ms · p90 ${base.p90.toFixed(1)}ms · 最大 ${base.max.toFixed(1)}ms · 掉帧(>50ms) ${base.over50}/${base.n}`);
+  }
+
+  // ② 逐个频率测：窗口真的在动
+  for (const hz of DRAG_TEST_RATES) {
+    const stepMs = hz > 0 ? Math.max(1, Math.round(1000 / hz)) : 0;
+    const [wx0, wy0] = win.getPosition();
+    const start = { x: wx0 + 100, y: wy0 + 100 }; // 假装鼠标在窗口内 100,100 处按下
+
+    dragProbe = { moves: [] };
+    const res = await win.webContents.executeJavaScript(`(async () => {
+      const api = window.petAPI, d = window.__petDebug;
+      const STEPS = ${STEPS}, DX = ${DX}, DY = ${DY}, STEP_MS = ${stepMs};
+      const sx = ${start.x}, sy = ${start.y};
+      d.frameGap.samples = [];
+      d.frameGap.on = true;
+      const t0 = performance.now();
+      api.dragStart({ x: sx, y: sy });
+      for (let i = 1; i <= STEPS; i++) {
+        api.dragMove({ x: sx + DX * i, y: sy + DY * i });
+        if (STEP_MS > 0) await new Promise((r) => setTimeout(r, STEP_MS));
+      }
+      api.dragEnd();
+      const ms = performance.now() - t0;
+      d.frameGap.on = false;
+      return { ms, samples: d.frameGap.samples };
+    })()`);
+
+    const probe = dragProbe;
+    dragProbe = null;
+    await sleep(250); // 让窗口停稳
+
+    const [wxEnd, wyEnd] = win.getPosition();
+    const st = statOf(res.samples);
+    const perSec = res.ms > 0 ? (probe.moves.length / (res.ms / 1000)) : 0;
+
+    // 跟踪误差：主进程算出来的目标位置 vs 理论值（理论值 = 起点 + 步长×步数）
+    let trackMax = 0;
+    let landMax = 0;
+    probe.moves.forEach((m, i) => {
+      const expX = wx0 + DX * (i + 1);
+      const expY = wy0 + DY * (i + 1);
+      trackMax = Math.max(trackMax, Math.abs(m.tx - expX), Math.abs(m.ty - expY));
+      landMax = Math.max(landMax, Math.abs(m.ax - m.tx), Math.abs(m.ay - m.ty));
+    });
+
+    const label = hz > 0 ? `${hz}Hz` : '连续发（极端）';
+    log(`【拖拽·${label}】收到 ${probe.moves.length} 次移动 → 搬窗口 ${probe.moves.length} 次（实测 ${perSec.toFixed(0)} 次/秒）`);
+    log(`   窗口位移 ${wxEnd - wx0},${wyEnd - wy0}（期望 ${DX * STEPS},${DY * STEPS}）· 目标位置误差 ${trackMax.toFixed(0)}px · 落地误差 ${landMax.toFixed(0)}px`);
+    if (st) log(`   帧间隔 中位 ${st.med.toFixed(1)}ms · p90 ${st.p90.toFixed(1)}ms · 最大 ${st.max.toFixed(1)}ms · 掉帧(>50ms) ${st.over50}/${st.n}`);
+    if (base && st) {
+      const r = base.med > 0 ? st.med / base.med : 0;
+      log(`   → 相对基线 ${r.toFixed(2)} 倍${r > 1.25 ? ' ⚠ 明显变慢' : ''}`);
+    }
+
+    // 每轮之间把窗口挪回原处，保证起点一致
+    win.setPosition(wx0, wy0);
+    await sleep(300);
+  }
+
+  quitAfterDragTest();
+}
+
+// ---------- 开发自检：拖拽时的「视线跟随」开关 ----------
+// 要验的是：拖拽期间角色的头不再被鼠标位置牵着抖。
+//
+// 这里能用 sendInputEvent 合成 mousedown/mouseup —— 因为渲染进程的
+// mousedown/mouseup 处理函数不看 screenX（只有拖拽移动才看），
+// 所以虽然合成事件的 screenX 恒为 0，触发「进入拖拽状态 / 退出拖拽状态」这两件事
+// 是完全可靠的。（screenX=0 会让窗口原地不动，正好，不会干扰。）
+//
+// 判定方式：直接问库本身 —— 拖拽中 interactionManager 还在不在。
+// 光看日志「我调了关闭函数」不算证据（HANDOFF 第六节第 19 条的教训：要能证伪）。
+async function runGazeSelfTest() {
+  log('===== 视线跟随自检开始 =====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterDragTest(); }
+
+  // 问库：autoInteract 标志 + 视线监听到底挂没挂
+  const state = () => win.webContents.executeJavaScript(`(() => {
+    const m = window.__petDebug.model;
+    return { autoInteract: m.autoInteract, attached: !!m.interactionManager };
+  })()`);
+
+  const center = await win.webContents.executeJavaScript(`(() => {
+    const b = window.__petDebug.model.getBounds();
+    return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) };
+  })()`);
+
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
+  };
+
+  const idle = await state();
+  ok(idle.autoInteract === true && idle.attached === true,
+    '平时：视线跟随是开着的（招牌动作）', ` → autoInteract=${idle.autoInteract} 已挂=${idle.attached}`);
+
+  // 把鼠标压到角色身上，否则 mousedown 会被忽略
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: center.x, y: center.y });
+  await sleep(400);
+
+  // --- 按下：应该进入拖拽状态，视线跟随被摘掉 ---
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+  await sleep(150);
+  const draggingState = await state();
+  ok(draggingState.autoInteract === false, '拖拽中：autoInteract 标志已置 false', ` → ${draggingState.autoInteract}`);
+  ok(draggingState.attached === false, '★ 拖拽中：视线监听确实摘掉了（头不会再跟着抖）', ` → 已挂=${draggingState.attached}`);
+
+  // 拖拽中再动几下，确认不会被库「偷偷挂回来」
+  for (let i = 1; i <= 5; i++) {
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: center.x + i * 3, y: center.y + i * 2 });
+    await sleep(30);
+  }
+  const stillOff = await state();
+  ok(stillOff.attached === false, '拖拽中移动若干次后，视线监听仍然是摘掉的（没被库挂回来）', ` → 已挂=${stillOff.attached}`);
+
+  // --- 松手：应该恢复 ---
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: center.x, y: center.y, button: 'left', clickCount: 1 });
+  await sleep(500); // 留几帧，让 _render() 自动挂回
+  const after = await state();
+  ok(after.autoInteract === true, '松手后：autoInteract 标志恢复 true', ` → ${after.autoInteract}`);
+  ok(after.attached === true, '★ 松手后：视线跟随自动挂回来了（招牌动作没丢）', ` → 已挂=${after.attached}`);
+
+  log(`===== 视线跟随自检结束：${pass} 通过 / ${fail} 失败 =====`);
+  log(fail === 0 ? '结论：拖拽时视线跟随能正确开关' : '结论：有失败项，拖拽时角色仍会抽动');
+  quitAfterDragTest();
+}
+
+// ---------- 开发自检：退出按钮 ----------
+// 要验两件事，第一件是最容易翻车的：
+//   ① 鼠标移到按钮上时，窗口必须「接住鼠标」。
+//      按钮是 DOM 元素、不在 WebGL 画布上 —— 如果穿透判定只读画布像素，
+//      窗口会一直保持穿透，按钮**永远点不到**（而且没有任何报错，纯静默失效）。
+//   ② 按钮的点击确实能触发退出（最后真点一下，程序该自己消失）。
+async function runExitButtonSelfTest() {
+  log('===== 退出按钮自检开始 =====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterDragTest(); }
+
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
+  };
+  const hitState = () => win.webContents.executeJavaScript('window.__petDebug.hitState()');
+
+  // 按钮在窗口里的位置，顺便问浏览器「这个点上最顶层的是谁」
+  const btn = await win.webContents.executeJavaScript(`(() => {
+    const b = document.getElementById('btn-exit');
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    const cx = Math.round(r.left + r.width / 2);
+    const cy = Math.round(r.top + r.height / 2);
+    const el = document.elementFromPoint(cx, cy);
+    return { cx, cy, w: Math.round(r.width), h: Math.round(r.height), topEl: el ? (el.id || el.tagName) : null };
+  })()`);
+
+  ok(!!btn, '页面上存在退出按钮');
+  if (!btn) { log('✗ 没有按钮，后面没法测'); return finishExitTest(pass, fail); }
+  ok(btn.topEl === 'btn-exit', '按钮就在它自己的位置上、没被别的东西盖住', ` → 该点最顶层是 ${btn.topEl}`);
+  log(`按钮位置：${btn.cx},${btn.cy}（${btn.w}×${btn.h}）`);
+
+  const idle = await hitState();
+  ok(idle.through === true, '鼠标不在窗口上时：窗口是穿透的（不挡桌面）', ` → through=${idle.through}`);
+
+  // ① 把鼠标移到按钮上 —— 这一步是关键
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: btn.cx, y: btn.cy });
+  await sleep(350);
+  const onBtn = await hitState();
+  ok(onBtn.overUi === true, '★ 鼠标移到按钮上：判定为「压在控件上」', ` → overUi=${onBtn.overUi}`);
+  ok(onBtn.through === false, '★ 压在按钮上时窗口接住了鼠标（不然按钮点不动）', ` → through=${onBtn.through}`);
+
+  // 移开，应该恢复穿透
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: 3, y: 3 });
+  await sleep(350);
+  const away = await hitState();
+  ok(away.overUi === false && away.through === true, '鼠标移开后：恢复穿透', ` → overUi=${away.overUi} through=${away.through}`);
+
+  log(`--- 前半段结果：${pass} 通过 / ${fail} 失败 ---`);
+
+  // ② 真点一下。点成功的话，这个进程会在下面这 2.5 秒内自己消失，
+  //    日志就会停在上一行 —— 「日志停在这里」本身就是成功信号。
+  log('最后一步：真点一下退出按钮。点了之后这个自检窗口就该消失；');
+  log('           如果 2.5 秒后还看到「✗ 按钮点了没反应」，说明没生效。');
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: btn.cx, y: btn.cy });
+  await sleep(250);
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: btn.cx, y: btn.cy, button: 'left', clickCount: 1 });
+  await sleep(60);
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: btn.cx, y: btn.cy, button: 'left', clickCount: 1 });
+  await sleep(2500);
+
+  log('✗ 按钮点了没反应，2.5 秒后程序还活着');
+  finishExitTest(pass, fail + 1);
+}
+
+function finishExitTest(pass, fail) {
+  log(`===== 退出按钮自检结束：${pass} 通过 / ${fail} 失败 =====`);
+  log(fail === 0 ? '结论：退出按钮可用' : '结论：有失败项');
+  quitAfterDragTest();
+}
+
+// ---------- 开发自检：调度引擎（端到端） ----------
+// 单元测试（npm run test:scheduler）验的是「判定逻辑对不对」；
+// 这里验的是「整条链路真的通了」—— 真的塞一条日程进去，等 30 秒轮询自己把它扫出来。
+// 对应 HANDOFF 第七节的验收标准：「设一个 2 分钟后的日程，终端打印『该提醒了：开会』」。
+async function runSchedulerSelfTest() {
+  log('===== 调度引擎自检开始（端到端）=====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterDragTest(); }
+  if (!scheduler.isRunning()) { log('✗ 调度引擎没启动'); return quitAfterDragTest(); }
+
+  // 塞一条 20 秒后的日程（时间只到分钟，所以实际落点可能比 20 秒近一些，
+  // 落在过去也没关系 —— 只要没超过 5 分钟宽限窗口，照样该响）
+  const at = new Date(Date.now() + 20000);
+  const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const added = schedules.add({ title: '自检·开会', time: hhmm, repeat: 'once', date: schedules.localDateKey(at) });
+  if (added.error) { log('✗ 塞日程失败：' + added.error); return quitAfterDragTest(); }
+
+  log(`已塞入日程「${added.title}」@ ${hhmm}（id=${added.id}）`);
+  log(`轮询每 ${scheduler.TICK_MS / 1000} 秒一次，最多等 75 秒…`);
+
+  const t0 = Date.now();
+  let hit = null;
+  while (Date.now() - t0 < 75000) {
+    hit = lastFired.find((f) => f.id === added.id) || null;
+    if (hit) break;
+    await sleep(500);
+  }
+
+  const waited = Math.round((Date.now() - t0) / 1000);
+  if (!hit) {
+    log(`✗ 等了 ${waited} 秒，调度引擎没把这条日程扫出来`);
+    log('===== 调度引擎自检结束：失败 =====');
+    return quitAfterDragTest();
+  }
+
+  log(`✓ 调度引擎自己扫到了它（等了 ${waited} 秒）`);
+  log(`✓ 终端打印了「该提醒了：${hit.title}」`);
+
+  // 关键：去重。再扫一次不能重复提醒（这是「关掉重开不重复提醒」的基础）
+  const reread = schedules.get(added.id);
+  log(`${reread && reread.lastFiredDate ? '✓' : '✗'} lastFiredDate 已写成 ${reread && reread.lastFiredDate}（去重靠它）`);
+  const again = scheduler.tick();
+  const reFired = again.some((d) => d.item.id === added.id);
+  log(`${reFired ? '✗ 又响了一次（去重失效）' : '✓'} 立刻再扫一遍：没有重复提醒`);
+
+  // 清掉自检数据
+  schedules.remove(added.id);
+  log(`✓ 自检数据已清理`);
+
+  const allGood = !reFired && reread && reread.lastFiredDate;
+  log(`===== 调度引擎自检结束：${allGood ? '通过' : '失败'} =====`);
+  quitAfterDragTest();
+}
+
 // ---------- 生命周期 ----------
 
 // 托盘软件的标准做法：只允许开一个实例，重复启动就把已有窗口唤出来
@@ -333,6 +713,10 @@ if (!gotLock) {
   app.whenReady().then(() => {
     createWindow();
     createTray();
+
+    // 阶段 2-2：日程调度引擎。每 30 秒扫一遍，到点回调（启动时也会立刻扫一次，
+    // 把「开机前 5 分钟内刚错过」的那条补上）。
+    scheduler.start(onScheduleDue);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -349,5 +733,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   quitting = true;
+  scheduler.stop();
   savePosition();
 });

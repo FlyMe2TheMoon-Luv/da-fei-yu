@@ -48,7 +48,8 @@ desktop-pet/
 │  │  ├─ main.js          窗口创建、托盘、位置记忆、生命周期
 │  │  ├─ preload.js       ← 唯一的安全桥梁
 │  │  ├─ store.js         本地 JSON 读写（一律写 userData）
-│  │  ├─ scheduler.js     日程轮询引擎（阶段 2）
+│  │  ├─ schedules.js     日程数据层：增删改查 + 校验 + 存盘（阶段 2-1）
+│  │  ├─ scheduler.js     日程轮询引擎：30 秒轮询 + 去重 + 5 分钟宽限（阶段 2-2）
 │  │  └─ focus/           专注模式（阶段 3）
 │  ├─ renderer/           ← 界面：浏览器世界，碰不到系统
 │  │  ├─ pet/             桌宠本体
@@ -91,7 +92,7 @@ desktop-pet/
 |---|---|---|
 | 0 | 环境准备（项目骨架 + CLAUDE.md） | ✅ 已完成 |
 | 1 | 桌宠外壳（透明窗口、拖拽、穿透、托盘、位置记忆、Live2D 形象） | ✅ 已完成 |
-| 2 | 日程提醒 | ⬜ 未开始 ← **下一步** |
+| 2 | 日程提醒 | 🚧 进行中（2-1 数据层 ✅ · 2-2 调度引擎 ✅） |
 | 3 | 专注模式 | ⬜ 未开始 |
 | 4 | 设置界面 | ⬜ 未开始 |
 | 5 | 打包发布 | ⬜ 未开始 |
@@ -128,14 +129,29 @@ desktop-pet/
     照方框摆窗口会虚胖一大圈。必须实测角色边界再裁（见 `renderer.js` 的 `setupFit`）。
 15. **只量一帧不够** —— 待机动作会让角色比首帧宽出 8%，实测能超出 20+ 像素。
     要采样一整个动作循环取并集，结果缓存到 `userData/model-bounds.json`。
+16. **拖拽时角色「抽搐」的元凶是视线跟随，不是掉帧** —— `pixi-live2d-display` 会把
+    「鼠标在画布内的位置」直接喂给 `model.focus()`；拖拽时鼠标不动、窗口在追它，
+    这个相对位置一直在抖，头就抽。修法是拖拽期间停掉视线跟随。
+    ⚠ `model.autoInteract = false` 单独用无效（它只管点击监听，视线跟随挂在
+    `_render()` 每帧调用的 `registerInteraction()` 上），必须**先设标志再手动
+    `unregisterInteraction()`**。详见 `HANDOFF.md` 第六节第 20 条。
+17. **往界面上加 DOM 控件必须挂 `data-ui` 属性，否则点不到** —— 动态穿透的命中判定
+    是读 WebGL 画布像素（`alphaAt`），DOM 控件不在画布上，会被当成「空白区域」，
+    窗口继续保持穿透，鼠标事件直接穿到桌面。`refreshHit()` 里用
+    `elementFromPoint` + `[data-ui]` 兜底；另外压在控件上时不能进入拖拽。
+    详见 `HANDOFF.md` 第六节第 21 条。
 
 ---
 
 ## 七、常用命令
 
 ```bash
-npm start        # 启动桌宠（开发）
-npm run build    # 打包（electron-builder）
+npm start              # 启动桌宠（开发）
+npm run test:schedules # 日程数据层自检（阶段 2-1，独立脚本，随时能跑）
+npm run test:scheduler # 调度引擎自检（阶段 2-2，纯逻辑、秒出结果）
+npm run test:gaze      # 拖拽时视线跟随开关自检（回归哨兵，桌宠开着也能跑）
+npm run test:exit      # 退出按钮自检（回归哨兵）
+npm run build          # 打包（electron-builder）
 ```
 
 ---
