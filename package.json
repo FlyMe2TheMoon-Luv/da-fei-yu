@@ -11,6 +11,7 @@
     "test:reminder": "node scripts/test-reminder.js",
     "test:scheduler-e2e": "node scripts/start-dev.js --no-gpu --selftest=scheduler --isolated",
     "test:reminder-e2e": "node scripts/start-dev.js --no-gpu --selftest=reminder --isolated",
+    "test:settings-e2e": "node scripts/start-dev.js --no-gpu --selftest=settings --isolated",
     "test:gaze": "node scripts/start-dev.js --no-gpu --selftest=gaze --isolated",
     "test:exit": "node scripts/start-dev.js --no-gpu --selftest=exit --isolated",
     "test:drag": "node scripts/start-dev.js --no-gpu --selftest=drag --isolated",
