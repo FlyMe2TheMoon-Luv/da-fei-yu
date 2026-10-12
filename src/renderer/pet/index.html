@@ -41,14 +41,13 @@
     #hint.gone { opacity: 0; }
     #hint.error { color: #b91c1c; }
 
-    /* 退出按钮。
-       ⚠ 它不在 WebGL 画布上，所以鼠标穿透的「读像素」判定看不见它。
-       必须靠 renderer.js 里 elementFromPoint 那条兜底逻辑，否则这个按钮点不到。
-       data-ui 就是给那条逻辑认领用的标记（以后加设置按钮也挂这个属性）。 */
-    #btn-exit {
+    /* 右上角两个小按钮：日程管理 / 退出。
+       ⚠ 它们不在 WebGL 画布上，所以鼠标穿透的「读像素」判定看不见它们。
+       必须靠 renderer.js 里 elementFromPoint 那条兜底逻辑，否则点不到。
+       data-ui 就是给那条逻辑认领用的标记（以后加任何界面控件都要挂这个属性）。 */
+    #btn-settings, #btn-exit {
       position: absolute;
       top: 8px;
-      right: 8px;
       width: 26px;
       height: 26px;
       padding: 0;
@@ -57,23 +56,32 @@
       background: rgba(255, 255, 255, .78);
       color: #6b7280;
       font-size: 13px;
-      line-height: 26px;
-      text-align: center;
       cursor: pointer;
       opacity: .38;
       box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
       transition: opacity .18s, background .18s, color .18s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    #btn-exit:hover {
-      opacity: 1;
-      background: #ef4444;
-      color: #fff;
-    }
+    #btn-exit { right: 8px; }
+    #btn-settings { right: 40px; }
+    #btn-settings:hover { opacity: 1; background: #3b82f6; color: #fff; }
+    #btn-exit:hover { opacity: 1; background: #ef4444; color: #fff; }
+    #btn-settings svg { width: 15px; height: 15px; display: block; }
   </style>
 </head>
 <body>
   <div id="stage"></div>
   <div id="hint">加载中…</div>
+
+  <button id="btn-settings" data-ui="1" title="日程管理" aria-label="日程管理">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="6.1" />
+      <path d="M8 4.5V8l2.4 1.6" />
+    </svg>
+  </button>
   <button id="btn-exit" data-ui="1" title="退出桌宠" aria-label="退出桌宠">✕</button>
 
   <!-- 顺序不能变：PIXI → Cubism Core → pixi-live2d-display -->

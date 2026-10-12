@@ -82,18 +82,27 @@ function frameGapStats(samples = frameGap.samples) {
   };
 }
 
-// ---------- 退出按钮 ----------
-// 走的是和托盘菜单「退出桌宠」同一条通道（pet:quit），主进程收到后真退出。
-// 渲染进程不碰系统，只负责把「用户点了退出」这件事报上去（硬性约定第 1 条）。
-function setupExitButton() {
-  const btn = document.getElementById('btn-exit');
-  if (!btn) return;
-  btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    log('点了退出按钮');
-    if (window.petAPI && window.petAPI.quit) window.petAPI.quit();
-  });
+// ---------- 右上角两个小按钮 ----------
+// 都走 IPC 交给主进程（渲染进程不碰系统，硬性约定第 1 条）：
+//   日程管理 → pet:open-settings（和托盘菜单「日程管理…」同一个入口）
+//   退出     → pet:quit（和托盘菜单「退出桌宠」同一条通道）
+//
+// ⚠ 这两个按钮不在 WebGL 画布上，全靠 refreshHit() 里 elementFromPoint + [data-ui]
+//   那条兜底逻辑才点得到。以后再加控件，别忘了挂 data-ui。
+function setupTopButtons() {
+  const bind = (id, label, fn) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      log(`点了${label}`);
+      if (window.petAPI && window.petAPI[fn]) window.petAPI[fn]();
+    });
+  };
+
+  bind('btn-settings', '日程管理按钮', 'openSettings');
+  bind('btn-exit', '退出按钮', 'quit');
 }
 
 // ---------- 日程提醒：角色的「表演」 ----------
@@ -191,7 +200,7 @@ function setupReminder(model) {
 
     // ===== 5. 交互 =====
     const interactions = setupInteractions(app, model);
-    setupExitButton();
+    setupTopButtons();
     setupReminder(model);
 
     // ===== 6. 启动后盯一会儿边缘，确认动作没把角色顶出窗口 =====

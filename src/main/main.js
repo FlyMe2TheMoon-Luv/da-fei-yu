@@ -18,6 +18,7 @@ const store = require('./store');
 const schedules = require('./schedules');
 const scheduler = require('./scheduler');
 const reminder = require('./reminder');
+const settingsWindow = require('./settings-window');
 
 const log = (m) => console.log('[main] ' + m);
 
@@ -167,6 +168,11 @@ function createWindow() {
     setTimeout(runReminderSelfTest, 1200);
   }
 
+  // 开发自检：日程管理窗口（见 runSettingsSelfTest）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'settings') {
+    setTimeout(runSettingsSelfTest, 1200);
+  }
+
   // 位置变化就记下来
   win.on('moved', scheduleSavePosition);
 
@@ -210,6 +216,8 @@ function resetPosition() {
 function menuTemplate() {
   return [
     { label: '显示 / 隐藏', click: togglePet },
+    { label: '日程管理…', click: () => settingsWindow.open() },
+    { type: 'separator' },
     { label: '重置位置', click: resetPosition },
     { type: 'separator' },
     {
@@ -307,6 +315,9 @@ ipcMain.on('pet:quit', () => {
   quitting = true;
   app.quit();
 });
+
+// 桌宠身上的「日程管理」按钮 → 打开设置窗口（和托盘菜单同一个入口）
+ipcMain.on('pet:open-settings', () => settingsWindow.open());
 
 // ---------- 开发自检 ----------
 
@@ -613,7 +624,9 @@ async function runExitButtonSelfTest() {
   };
   const hitState = () => win.webContents.executeJavaScript('window.__petDebug.hitState()');
 
-  // 按钮在窗口里的位置，顺便问浏览器「这个点上最顶层的是谁」
+  // 按钮在窗口里的位置，顺便问浏览器「这个点上最顶层的是谁」。
+  // ⚠ 必须用 closest('[data-ui]')，和 refreshHit() 里的真实判定保持一致 ——
+  //   按钮里放的是 SVG，elementFromPoint 返回的最深层元素是 <path> 而不是按钮本身。
   const btn = await win.webContents.executeJavaScript(`(() => {
     const b = document.getElementById('btn-exit');
     if (!b) return null;
@@ -621,7 +634,8 @@ async function runExitButtonSelfTest() {
     const cx = Math.round(r.left + r.width / 2);
     const cy = Math.round(r.top + r.height / 2);
     const el = document.elementFromPoint(cx, cy);
-    return { cx, cy, w: Math.round(r.width), h: Math.round(r.height), topEl: el ? (el.id || el.tagName) : null };
+    const ui = el && el.closest ? el.closest('[data-ui]') : null;
+    return { cx, cy, w: Math.round(r.width), h: Math.round(r.height), topEl: ui ? (ui.id || ui.tagName) : (el ? el.tagName : null) };
   })()`);
 
   ok(!!btn, '页面上存在退出按钮');
@@ -857,6 +871,249 @@ async function runReminderSelfTest() {
   finishExitTest(pass, fail, '提醒呈现');
 }
 
+// ---------- 开发自检：日程管理窗口（阶段 2-4）----------
+// 要验的是「整条链路真的通了」，不是「我写了界面」：
+//   窗口真的开出来了吗、主人填的东西真的存进文件了吗、列表真的刷新了吗、
+//   填错了真的会拦下来吗、开关/删除真的生效吗。
+//
+// 判定原则（HANDOFF 第六节第 19 条的教训）：
+//   不看界面自己的提示语，而是**两条路各问一次** ——
+//   ① 问界面：DOM 里现在有几条？
+//   ② 问主进程：schedules.list() 里真的有这条吗？
+//   两边对上了才算数。只看一边，界面假装刷新了也能骗过测试。
+//
+// ⚠ 这个自检会往日程文件里写一条再删掉。跑的时候用 --isolated 更干净。
+async function runSettingsSelfTest() {
+  log('===== 日程管理窗口自检开始（阶段 2-4）=====');
+  if (!win || win.isDestroyed()) { log('✗ 没有桌宠窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
+
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
+  };
+
+  // 先把遗留的自检数据清掉，保证从干净状态开始
+  for (const it of schedules.list()) {
+    if (it.title.startsWith('自检·')) schedules.remove(it.id);
+  }
+
+  // ===== ① 从桌宠身上的按钮打开 =====
+  // 顺便验第六节第 21 条那个坑：DOM 控件不在 WebGL 画布上，穿透判定看不见它，
+  // 不挂 data-ui 就会「看着好好的，点上去毫无反应，而且不报错」。
+  log('① 点桌宠身上的「日程管理」按钮');
+  const btn = await win.webContents.executeJavaScript(`(() => {
+    const b = document.getElementById('btn-settings');
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    const cx = Math.round(r.left + r.width / 2);
+    const cy = Math.round(r.top + r.height / 2);
+    const el = document.elementFromPoint(cx, cy);
+    const ui = el && el.closest ? el.closest('[data-ui]') : null;
+    return { cx, cy, topEl: ui ? (ui.id || ui.tagName) : (el ? el.tagName : null) };
+  })()`);
+  ok(!!btn, '桌宠界面上有「日程管理」按钮');
+  if (!btn) { log('✗ 没有按钮，后面没法测'); return finishExitTest(pass, fail + 1, '日程管理窗口'); }
+
+  ok(btn.topEl === 'btn-settings', '按钮就在它自己的位置上、没被别的东西盖住',
+    ` → 该点最顶层是 ${btn.topEl}`);
+
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: btn.cx, y: btn.cy });
+  await sleep(350);
+  const btnHit = await win.webContents.executeJavaScript('window.__petDebug.hitState()');
+  ok(btnHit.overUi === true && btnHit.through === false,
+    '★ 鼠标移上去时窗口接住了鼠标（不然按钮点不动）',
+    ` → overUi=${btnHit.overUi} through=${btnHit.through}`);
+
+  // 真点一下
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: btn.cx, y: btn.cy, button: 'left', clickCount: 1 });
+  await sleep(60);
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: btn.cx, y: btn.cy, button: 'left', clickCount: 1 });
+  await sleep(900);
+
+  const sw = settingsWindow.getWindow();
+  ok(settingsWindow.isOpen() === true, '★ 按钮点下去，窗口真的开出来了');
+  if (!sw) { log('✗ 窗口没开出来，后面没法测'); return finishExitTest(pass, fail + 1, '日程管理窗口'); }
+
+  await new Promise((r) => {
+    if (!sw.webContents.isLoading()) return r();
+    sw.webContents.once('did-finish-load', r);
+  });
+  await sleep(400);
+
+  ok(sw.isVisible() === true, '★ 窗口真的显示出来了（不是只创建了对象）',
+    ` → visible=${sw.isVisible()}`);
+  log(`窗口尺寸 ${sw.getBounds().width}×${sw.getBounds().height}`);
+
+  // ===== ② 这个窗口必须能抢焦点 =====
+  // 气泡窗口是 focusable:false（不打断主人打字），设置窗口正好相反。
+  // ⚠ 负对照放在第 ⑦ 步 —— 那里气泡窗口已经建出来了，拿它来对照才有意义。
+  //   （曾经想拿桌宠窗口当对照，但实测它本身是 focusable 的，对照不出东西来。）
+  log('② 能不能抢焦点（主人要在这里打字）');
+  ok(sw.isFocusable() === true, '★ 设置窗口可以抢焦点',
+    ` → focusable=${sw.isFocusable()}`);
+
+  // ===== ③ 空列表该显示「还没有日程」=====
+  log('③ 空状态');
+  const emptyState = await sw.webContents.executeJavaScript(`(() => ({
+    items: document.querySelectorAll('#list .item').length,
+    emptyShown: !document.getElementById('empty').classList.contains('hidden'),
+  }))()`);
+  ok(emptyState.items === 0 && emptyState.emptyShown === true,
+    '没有日程时显示「还没有日程」的提示，而不是一片空白',
+    ` → 列表 ${emptyState.items} 条 · 提示显示=${emptyState.emptyShown}`);
+
+  // ===== ④ 负对照：标题不填就该被拦下来 =====
+  log('④ ★ 负对照：标题空着保存 → 必须被拦下，且不能写进文件');
+  const bad = await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('btn-add').click();
+    document.getElementById('f-title').value = '';
+    document.getElementById('f-time').value = '07:15';
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 300));
+    const err = document.getElementById('form-error');
+    return {
+      errorShown: !err.classList.contains('hidden'),
+      errorText: err.textContent,
+      formStillOpen: !document.getElementById('form').classList.contains('hidden'),
+      items: document.querySelectorAll('#list .item').length,
+    };
+  })()`);
+  ok(bad.errorShown === true, '界面上给出了错误提示', ` → “${bad.errorText}”`);
+  ok(bad.formStillOpen === true, '表单没被关掉（主人填的东西还在，不用重填）');
+  ok(schedules.list().filter((x) => x.title === '').length === 0, '★ 主进程那边确实没写进文件');
+
+  // ===== ⑤ 正例：填好保存 → 界面和文件两边都要有 =====
+  log('⑤ 添加一条日程（每天 07:15 自检·日程）');
+  const added = await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('f-title').value = '自检·日程';
+    document.getElementById('f-time').value = '07:15';
+    const rep = document.getElementById('f-repeat');
+    rep.value = 'daily';
+    rep.dispatchEvent(new Event('change'));
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 400));
+    const li = document.querySelector('#list .item');
+    return {
+      count: document.querySelectorAll('#list .item').length,
+      time: li ? li.querySelector('.time').textContent : null,
+      title: li ? li.querySelector('.title').textContent : null,
+      repeat: li ? li.querySelector('.repeat').textContent : null,
+      formClosed: document.getElementById('form').classList.contains('hidden'),
+      emptyHidden: document.getElementById('empty').classList.contains('hidden'),
+    };
+  })()`);
+
+  const inFile = schedules.list().filter((x) => x.title === '自检·日程');
+  ok(added.count === 1, '★ 界面上出现了这条日程', ` → 列表 ${added.count} 条`);
+  ok(inFile.length === 1, '★ 主进程那边确实存进了文件（两边对上了才算数）',
+    ` → 文件里 ${inFile.length} 条`);
+  ok(added.time === '07:15' && added.title === '自检·日程', '列表上显示的时间 / 标题和填的一致',
+    ` → “${added.time} ${added.title}”`);
+  ok(added.repeat === '每天', '重复规则显示成人话「每天」', ` → “${added.repeat}”`);
+  ok(added.formClosed === true, '保存后表单自动收起');
+  ok(added.emptyHidden === true, '有日程之后，「还没有日程」的提示自动藏起来');
+  const testId = inFile.length ? inFile[0].id : null;
+
+  // ===== ⑥ 开关：临时关掉 / 打开 =====
+  log('⑥ 开关（临时关掉，不删除）');
+  if (testId) {
+    const toggled = await sw.webContents.executeJavaScript(`(async () => {
+      const sw2 = document.querySelector('#list .item .switch');
+      const before = sw2.getAttribute('aria-pressed');
+      sw2.click();
+      await new Promise((r) => setTimeout(r, 400));
+      const after = document.querySelector('#list .item .switch').getAttribute('aria-pressed');
+      return { before, after, off: document.querySelector('#list .item').classList.contains('off') };
+    })()`);
+    const item = schedules.get(testId);
+    ok(toggled.before === 'true' && toggled.after === 'false', '点开关后界面状态翻转了',
+      ` → ${toggled.before} → ${toggled.after}`);
+    ok(item && item.enabled === false, '★ 主进程那边 enabled 也真的变成 false 了');
+    ok(toggled.off === true, '关掉的日程在列表上变淡了（一眼能看出它是关着的）');
+
+    // 打开回来，顺便验一下「关掉不等于删除」
+    await sw.webContents.executeJavaScript(`(async () => {
+      document.querySelector('#list .item .switch').click();
+      await new Promise((r) => setTimeout(r, 400));
+    })()`);
+    const back = schedules.get(testId);
+    ok(back && back.enabled === true, '再点一下能打开回来（关掉 ≠ 删除）');
+  } else {
+    ok(false, '拿不到刚加的那条日程的 id，后面没法测');
+  }
+
+  // ===== ⑦ 预览提醒：气泡真的弹出来 =====
+  log('⑦ 预览提醒效果');
+  const before7 = reminder.isShowing();
+  await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('btn-preview').click();
+    await new Promise((r) => setTimeout(r, 700));
+  })()`);
+  const after7 = reminder.isShowing();
+  ok(before7 === false, '点之前气泡是收着的（不然下面看不出变化）');
+  ok(after7 === true, '★ 点「预览提醒效果」后气泡真的弹出来了');
+  const previewDom = await reminder.debugBubble();
+  ok(!!(previewDom.dom && /预览/.test(previewDom.dom.title || '')), '气泡上显示的是预览文案',
+    ` → “${previewDom.dom && previewDom.dom.title}”`);
+
+  // ★ 负对照：气泡窗口必须**不能**抢焦点，否则每次提醒都会打断主人正在打的字。
+  //   有它作对照，第 ② 步「设置窗口能抢焦点」才是有意义的断言
+  //   —— 否则两个窗口都返回 true，那条第 ② 步等于什么都没验。
+  const bw2 = reminder.getBubbleWindow();
+  ok(!!bw2 && bw2.isFocusable() === false,
+    '★ 负对照：气泡窗口不能抢焦点（不打断主人打字）',
+    ` → ${bw2 ? 'focusable=' + bw2.isFocusable() : '气泡窗口不在'}`);
+
+  reminder.hideBubble('自检收尾');
+
+  // ===== ⑧ 删除要按两下（防手滑）=====
+  log('⑧ 删除：按一下是「确定删？」，按两下才真删');
+  if (testId) {
+    const del = await sw.webContents.executeJavaScript(`(async () => {
+      const b = document.querySelector('#list .item .actions .danger');
+      b.click();                                  // 第一下：变成确认
+      await new Promise((r) => setTimeout(r, 150));
+      const label = b.textContent;
+      const stillThere = document.querySelectorAll('#list .item').length;
+      return { label, stillThere };
+    })()`);
+    ok(del.label === '确定删？', '第一下只是变成「确定删？」', ` → “${del.label}”`);
+    ok(del.stillThere === 1 && !!schedules.get(testId), '★ 第一下没有真的删掉（防手滑生效）');
+
+    const after = await sw.webContents.executeJavaScript(`(async () => {
+      document.querySelector('#list .item .actions .danger').click();
+      await new Promise((r) => setTimeout(r, 400));
+      return {
+        count: document.querySelectorAll('#list .item').length,
+        emptyShown: !document.getElementById('empty').classList.contains('hidden'),
+      };
+    })()`);
+    ok(after.count === 0, '第二下真的删掉了（界面上没了）');
+    ok(schedules.get(testId) === null, '★ 主进程那边也确实没了');
+    ok(after.emptyShown === true, '删空之后「还没有日程」的提示又回来了');
+  }
+
+  // ===== ⑨ 收尾 =====
+  log('⑨ 收尾');
+  for (const it of schedules.list()) {
+    if (it.title.startsWith('自检·')) schedules.remove(it.id);
+  }
+  ok(schedules.list().filter((x) => x.title.startsWith('自检·')).length === 0, '自检数据已清理');
+
+  // 重复打开不该出现第二个窗口
+  const again = settingsWindow.open();
+  ok(again === sw, '重复打开拿到的是同一个窗口（不会开出第二个）');
+
+  settingsWindow.close();
+  await sleep(300);
+  ok(settingsWindow.isOpen() === false, '关闭后窗口对象被回收（不会漏）');
+
+  finishExitTest(pass, fail, '日程管理窗口');
+}
+
 // ---------- 生命周期 ----------
 
 // 托盘软件的标准做法：只允许开一个实例，重复启动就把已有窗口唤出来
@@ -873,6 +1130,18 @@ if (!gotLock) {
     // 阶段 2-3：提醒呈现。气泡窗口 + 桌宠表演 + 系统通知兜底都在这里面，
     // 这里只把「桌宠窗口在哪」告诉它（它自己拿不到）。
     reminder.init({ getPetWindow: () => win });
+
+    // 阶段 2-4：日程管理窗口（按需打开，不占内存）。
+    // 「预览提醒效果」按钮直接复用提醒呈现那套，看到的和真到点时一模一样。
+    settingsWindow.init({
+      onPreview: () => reminder.present({ title: '开会（预览效果）' }, new Date()),
+    });
+
+    // 开发便利：启动时直接把日程管理窗口开出来，方便做视觉验收 / 截图。
+    //   PET_OPEN_SETTINGS=1 npm start -- --no-gpu
+    if (!app.isPackaged && process.env.PET_OPEN_SETTINGS === '1') {
+      setTimeout(() => settingsWindow.open(), 2500);
+    }
 
     // 阶段 2-2：日程调度引擎。每 30 秒扫一遍，到点回调（启动时也会立刻扫一次，
     // 把「开机前 5 分钟内刚错过」的那条补上）。

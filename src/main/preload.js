@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   hide: () => ipcRenderer.send('pet:hide'),
   quit: () => ipcRenderer.send('pet:quit'),
 
+  // ---- 打开日程管理窗口（和托盘菜单「日程管理…」同一个入口）----
+  openSettings: () => ipcRenderer.send('pet:open-settings'),
+
   // ---- 右键菜单：弹出和托盘一样的菜单 ----
   showMenu: () => ipcRenderer.send('pet:show-menu'),
 
