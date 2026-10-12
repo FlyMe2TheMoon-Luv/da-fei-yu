@@ -437,11 +437,17 @@ el.repeat.addEventListener('change', syncRepeatRows);
 el.kind.addEventListener('change', syncKindRows);
 el.btnWeek.addEventListener('click', toggleMode);
 
-// 主进程换完窗口尺寸后的回执 —— 以它为准（万一以后有别的入口也能切模式）
+// 主进程换完窗口尺寸后的回执。
+// 自己点按钮切的时候，这里拿到的和本地已经设好的一样 → 直接 return，避免重复渲染。
+// 但如果**主进程主动**切（比如托盘菜单、或截图工具），这里得负责把内容也画出来，
+// 否则会留下一个空空的周视图框。
 if (api.onMode) {
   api.onMode((m) => {
-    mode = m === 'week' ? 'week' : 'list';
+    const next = m === 'week' ? 'week' : 'list';
+    if (next === mode) return;
+    mode = next;
     applyMode();
+    if (mode === 'week') loadWeek();
   });
 }
 
