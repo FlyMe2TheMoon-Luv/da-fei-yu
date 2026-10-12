@@ -19,6 +19,7 @@ const schedules = require('./schedules');
 const scheduler = require('./scheduler');
 const reminder = require('./reminder');
 const settingsWindow = require('./settings-window');
+const { placeNear } = require('./place');   // 自检里要复算一遍设置窗口该待的位置
 
 const log = (m) => console.log('[main] ' + m);
 
@@ -103,6 +104,13 @@ function createWindow() {
     resizable: false,
     hasShadow: false, // 有阴影的话透明边缘会显出一圈灰
     skipTaskbar: true, // 不占任务栏，桌宠该待在托盘
+    // ★ 关键：桌宠永远不抢输入焦点。
+    //   主人反馈「打字的时候桌宠抢焦点」—— 桌宠是常驻置顶窗口，以前点它一下
+    //   就把正在打字的软件顶到后台，输入框失焦，打得正顺的字就断了。
+    //   设成 focusable:false 后，鼠标照样点得到（拖拽、点按钮都不受影响），
+    //   但它拿不到键盘焦点、也不会把别的窗口挤下去。
+    //   ⚠ 配套要求：显示它一律用 showInactive()，别用 show()。
+    focusable: false,
     show: false, // 等渲染好再显示，避免白闪一下
     backgroundColor: '#00000000',
     roundedCorners: false, // Windows 11 默认会给窗口切圆角，会切到角色
@@ -133,7 +141,9 @@ function createWindow() {
     });
   }
 
-  win.once('ready-to-show', () => win.show());
+  // showInactive 而不是 show：桌宠是 focusable:false，用 show 有可能顺手把焦点
+  // 挪到它身上（不同 Windows 版本表现不一致），showInactive 明确表示「只显示、不激活」。
+  win.once('ready-to-show', () => win.showInactive());
 
   // 开发自检：模拟鼠标移动，验证「穿透切换」整条链路通不通。
   // 只测渲染进程 → 主进程这一段的逻辑；系统层是否真的放行点击，只能靠人手试。
@@ -173,10 +183,18 @@ function createWindow() {
     setTimeout(runSettingsSelfTest, 1200);
   }
 
+  // 开发自检：桌宠不抢焦点（见 runFocusSelfTest）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'focus') {
+    setTimeout(runFocusSelfTest, 1200);
+  }
+
   // 位置变化就记下来
   win.on('moved', scheduleSavePosition);
 
-  // 关闭按钮 / Alt+F4 不真退出，收进托盘（真退出走托盘菜单）
+  // 收到关闭请求（比如托盘菜单里点了「隐藏」）不真退出，只收进托盘。
+  // 真退出走托盘菜单的「退出桌宠」——那条路会把 quitting 置为 true，这里直接放行。
+  // 注：窗口现在是 focusable:false，Alt+F4 够不到它（这正是我们想要的：
+  //    主人按 Alt+F4 应该关掉自己正在用的软件，而不是把桌宠关掉）。
   win.on('close', (e) => {
     if (quitting) return;
     e.preventDefault();
@@ -189,7 +207,7 @@ function createWindow() {
 
 function showPet() {
   if (!win) return createWindow();
-  win.show();
+  win.showInactive();   // 不抢焦点，见 createWindow 里 focusable:false 的注释
   win.setAlwaysOnTop(true, 'screen-saver');
 }
 
@@ -199,7 +217,7 @@ function togglePet() {
     savePosition();
     win.hide();
   } else {
-    win.show();
+    win.showInactive();
   }
 }
 
@@ -682,6 +700,111 @@ function finishExitTest(pass, fail, label = '退出按钮') {
   quitAfterSelfTest();
 }
 
+// ---------- 开发自检：桌宠不抢焦点 ----------
+// 主人反馈：「打字的时候桌宠抢焦点」。桌宠是常驻置顶窗口，以前鼠标点它一下
+// 就把正在打字的软件顶到后台、输入框失焦，打得正顺的字就断了。
+// 修法是 focusable:false。这个自检盯住它，防止以后被无意改回去。
+//
+// ⚠ 诚实的边界（别把这个自检当成万能证明）：
+//   这里能验的是「窗口的配置对不对」。
+//   「真的不影响别的软件打字」是操作系统层的行为，自动化测不到，只能人工试。
+//   所以特意加了两条负对照，防止「假通过」：
+//     ③ 窗口必须真的显示出来了 —— 否则「不抢焦点」可能只是因为压根没显示
+//     ④ 设置窗口必须**还能**抢焦点 —— 否则可能是把整个程序的焦点能力都关掉了
+async function runFocusSelfTest() {
+  log('===== 桌宠不抢焦点自检开始 =====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
+
+  let pass = 0;
+  let fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
+  };
+
+  // ===== ① 核心：桌宠窗口必须不可聚焦 =====
+  log('① 桌宠窗口的聚焦属性');
+  ok(win.isFocusable() === false, '★ 桌宠 focusable=false（点它不会抢走键盘焦点）',
+    ` → focusable=${win.isFocusable()}`);
+  ok(win.isFocused() === false, '★ 它当前也不是焦点窗口',
+    ` → focused=${win.isFocused()}`);
+
+  // ===== ② ★ 负对照：它得真的显示着，不然「不抢焦点」是废话 =====
+  log('② ★ 负对照：确认它真的显示着（排除「因为没显示所以不抢焦点」）');
+  win.showInactive();
+  await sleep(400);
+  ok(win.isVisible() === true, '★ 调 showInactive() 之后桌宠确实显示着',
+    ` → visible=${win.isVisible()}`);
+  ok(win.isFocused() === false, '★ 显示之后它也没有变成焦点窗口',
+    ` → focused=${win.isFocused()}`);
+  ok(win.isAlwaysOnTop() === true, '仍然浮在最上层（不抢焦点 ≠ 不置顶）',
+    ` → isAlwaysOnTop=${win.isAlwaysOnTop()}`);
+
+  // ===== ③ ★ 负对照：在它身上点一下，焦点不能被抢走 =====
+  // 注：sendInputEvent 是直接灌进渲染进程的，绕过了操作系统那一层，
+  //     所以这条能证明的是「配置没被改回去」，证明不了系统层的真实行为。
+  log('③ ★ 负对照：在角色身上点一下');
+  win.webContents.sendInputEvent({ type: 'mouseMove', x: 200, y: 190 });
+  await sleep(150);
+  win.webContents.sendInputEvent({ type: 'mouseDown', x: 200, y: 190, button: 'left', clickCount: 1 });
+  await sleep(60);
+  win.webContents.sendInputEvent({ type: 'mouseUp', x: 200, y: 190, button: 'left', clickCount: 1 });
+  await sleep(400);
+  ok(win.isFocusable() === false, '★ 点过之后依然 focusable=false');
+  ok(win.isFocused() === false, '★ 点过之后依然没抢到焦点',
+    ` → focused=${win.isFocused()}`);
+  ok(win.isVisible() === true, '点过之后桌宠还在（没被误关掉）');
+
+  // ===== ④ ★ 负对照：主人主动打开的设置窗口，必须还能抢焦点 =====
+  // 「不抢焦点」如果做过头（比如整个程序都关了），主人就没法在设置窗口里打字了。
+  log('④ ★ 负对照：设置窗口必须还能拿焦点');
+  settingsWindow.open();
+  await sleep(900);
+  const sw = settingsWindow.getWindow();
+  if (!sw) {
+    ok(false, '设置窗口没能打开');
+  } else {
+    await new Promise((r) => {
+      if (!sw.webContents.isLoading()) return r();
+      sw.webContents.once('did-finish-load', r);
+    });
+    await sleep(400);
+    ok(sw.isFocusable() === true, '★ 设置窗口 focusable=true（主人能在里面打字）',
+      ` → focusable=${sw.isFocusable()}`);
+    ok(sw.isFocused() === true, '★ 设置窗口真的拿到了焦点（打开就能直接输入）',
+      ` → focused=${sw.isFocused()}`);
+  }
+
+  // ===== ⑤ 关掉设置窗口 → 桌宠恢复置顶，且依然不抢焦点 =====
+  log('⑤ 关掉设置窗口之后的收尾');
+  settingsWindow.close();
+  await sleep(700);
+  ok(settingsWindow.isOpen() === false, '设置窗口已关闭');
+  ok(win.isAlwaysOnTop() === true, '★ 桌宠恢复置顶（没被忘在普通层级）',
+    ` → isAlwaysOnTop=${win.isAlwaysOnTop()}`);
+  ok(win.isFocusable() === false, '★ 关掉之后桌宠依然不抢焦点',
+    ` → focusable=${win.isFocusable()}`);
+
+  // ===== ⑥ 提醒气泡同样不能抢焦点 =====
+  log('⑥ 提醒气泡也不能抢焦点');
+  await reminder.present({ title: '自检·不抢焦点' }, new Date(), { autoHideMs: 0 });
+  await sleep(600);
+  const bw = reminder.getBubbleWindow();
+  ok(!!bw, '气泡窗口已经建出来了');
+  if (bw) {
+    ok(bw.isFocusable() === false, '★ 气泡窗口 focusable=false（提醒不打断打字）',
+      ` → focusable=${bw.isFocusable()}`);
+    ok(bw.isFocused() === false, '★ 气泡也不是焦点窗口',
+      ` → focused=${bw.isFocused()}`);
+    ok(bw.isVisible() === true, '气泡确实显示着（同样排除「没显示所以不抢焦点」）',
+      ` → visible=${bw.isVisible()}`);
+  }
+  reminder.hideBubble('自检收尾');
+
+  finishExitTest(pass, fail, '桌宠不抢焦点');
+}
+
 // ---------- 开发自检：调度引擎（端到端） ----------
 // 单元测试（npm run test:scheduler）验的是「判定逻辑对不对」；
 // 这里验的是「整条链路真的通了」—— 真的塞一条日程进去，等 30 秒轮询自己把它扫出来。
@@ -861,7 +984,7 @@ async function runReminderSelfTest() {
   ok(rec2.notification === Notification.isSupported(),
     '★ 桌宠看不见时：改用系统通知兜底（不该被静默吞掉）',
     ` → 系统支持通知=${Notification.isSupported()} 实际发出=${rec2.notification}`);
-  win.show();
+  win.showInactive();
   await sleep(350);
 
   // ===== ⑧ 收尾：别把气泡留在屏幕上 =====
@@ -890,6 +1013,7 @@ async function runSettingsSelfTest() {
 
   let pass = 0;
   let fail = 0;
+  let petRectBefore = null;   // 开设置窗口之前的桌宠位置，收尾时拿来对照
   const ok = (cond, label, extra = '') => {
     if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
     else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
@@ -946,6 +1070,55 @@ async function runSettingsSelfTest() {
   ok(sw.isVisible() === true, '★ 窗口真的显示出来了（不是只创建了对象）',
     ` → visible=${sw.isVisible()}`);
   log(`窗口尺寸 ${sw.getBounds().width}×${sw.getBounds().height}`);
+
+  // ===== ①b 位置：必须贴着桌宠，不能丢在屏幕正中 =====
+  // 主人原话：「设置窗口的按钮离桌宠太远，我希望能点击桌宠后在靠近桌宠的右上方显示出来」。
+  // 以前不传 x/y，Electron 就丢在屏幕正中。这里复算一遍「应该在哪」，和实际位置对照 ——
+  // 这样万一以后有人把 positionNearPet() 那行删了，这条会立刻红。
+  log('①b 窗口位置');
+  {
+    const petRect = win.getBounds();
+    const disp = screen.getDisplayMatching(petRect);
+    const b = sw.getBounds();
+    const want = placeNear(petRect,
+      { w: settingsWindow.WIN_W, h: settingsWindow.WIN_H }, disp.workArea);
+    ok(b.x === want.x && b.y === want.y,
+      `★ 窗口精确落在算好的位置上（实际 ${b.x},${b.y} / 期望 ${want.x},${want.y} · 方位 ${want.side}）`);
+    // 顺带验「外框尺寸没被系统撑大」。
+    // 允许 ±2 像素：屏幕缩放 1.5 时，带标题栏的窗口只要被 SetWindowPos 那类调用碰一下
+    // （setPosition / setAlwaysOnTop / moveTop 都会），外框就会多出 1 像素。
+    // 实测过：setBounds 写回 480×640 后，一次 setAlwaysOnTop 就变成 481×641。
+    // 位置是精确的，这 1 像素对主人不可见，所以不追求像素级相等。
+    const dw = Math.abs(b.width - settingsWindow.WIN_W);
+    const dh = Math.abs(b.height - settingsWindow.WIN_H);
+    ok(dw <= 2 && dh <= 2,
+      `窗口外框尺寸和标称值相差不超过 2 像素（标称 ${settingsWindow.WIN_W}×${settingsWindow.WIN_H}）`,
+      ` → 实际 ${b.width}×${b.height}`);
+
+    const centerX = disp.workArea.x + Math.round((disp.workArea.width - b.width) / 2);
+    const centerY = disp.workArea.y + Math.round((disp.workArea.height - b.height) / 2);
+    ok(b.x !== centerX || b.y !== centerY,
+      `★ 负对照：不再落在屏幕正中（正中是 ${centerX},${centerY}）`);
+
+    const overlap = b.x < petRect.x + petRect.width && b.x + b.width > petRect.x &&
+                    b.y < petRect.y + petRect.height && b.y + b.height > petRect.y;
+    ok(overlap === false, '没有把桌宠盖住');
+
+    const gx = Math.max(petRect.x - (b.x + b.width), b.x - (petRect.x + petRect.width), 0);
+    const gy = Math.max(petRect.y - (b.y + b.height), b.y - (petRect.y + petRect.height), 0);
+    const gap = Math.round(Math.sqrt(gx * gx + gy * gy));
+    ok(gap <= 60, `离桌宠很近（缝隙 ${gap}px）`);
+
+    const insideArea = b.x >= disp.workArea.x && b.y >= disp.workArea.y &&
+                       b.x + b.width <= disp.workArea.x + disp.workArea.width &&
+                       b.y + b.height <= disp.workArea.y + disp.workArea.height;
+    ok(insideArea, '完整落在屏幕工作区内（没有一半跑到屏幕外）');
+
+    // ★ 负对照：开设置窗口会把桌宠降到普通层级（lowerPet），关掉再升回去（restorePet）。
+    //   这两个动作都用 setAlwaysOnTop —— 实测它在某些缩放下会**连带挪动窗口**。
+    //   桌宠位置是主人自己拖出来的，被悄悄挪走非常讨厌，所以这里盯住它。
+    petRectBefore = petRect;
+  }
 
   // 桌宠本该是 screen-saver 层级，会压住设置窗口一块 ——
   // 所以设置窗口开着的时候要把它临时降下来（关掉再升回去）。
@@ -1162,6 +1335,16 @@ async function runSettingsSelfTest() {
   ok(win.isAlwaysOnTop() === true,
     '★ 设置窗口关掉后，桌宠层级已恢复（继续浮在最上层）',
     ` → 桌宠 isAlwaysOnTop=${win.isAlwaysOnTop()}`);
+
+  // ★ 负对照：整个开→关的过程里，桌宠的位置不能被挪动。
+  //   原因见上面 petRectBefore 的注释：lowerPet/restorePet 用的 setAlwaysOnTop
+  //   在某些缩放下会连带挪窗口。位置是主人自己拖出来的，不该被程序悄悄改掉。
+  const petAfter = win.getBounds();
+  if (petRectBefore) {
+    ok(petAfter.x === petRectBefore.x && petAfter.y === petRectBefore.y,
+      '★ 开关设置窗口的全过程中，桌宠位置没有被挪动',
+      ` → ${petRectBefore.x},${petRectBefore.y} → ${petAfter.x},${petAfter.y}`);
+  }
 
   finishExitTest(pass, fail, '日程管理窗口');
 }
