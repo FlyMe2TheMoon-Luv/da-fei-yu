@@ -19,6 +19,7 @@ const schedules = require('./schedules');
 const scheduler = require('./scheduler');
 const reminder = require('./reminder');
 const settingsWindow = require('./settings-window');
+const week = require('./week');             // 周视图自检要拿它做交叉验证
 const { placeNear } = require('./place');   // 自检里要复算一遍设置窗口该待的位置
 
 const log = (m) => console.log('[main] ' + m);
@@ -191,6 +192,20 @@ function createWindow() {
   // 开发自检：日程管理窗口（见 runSettingsSelfTest）。
   if (!app.isPackaged && process.env.PET_SELFTEST === 'settings') {
     setTimeout(runSettingsSelfTest, 1200);
+  }
+
+  // 开发自检：周视图端到端（见 selftest-week.js）。
+  // 这个自检自成一体（窗口 + 数据 + DOM 三方对照），所以单独放一个文件，不往 main.js 里塞。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'week') {
+    setTimeout(() => require('./selftest-week').run({
+      win,
+      log,
+      sleep,
+      finish: finishExitTest,
+      settingsWindow,
+      week,
+      schedules,
+    }), 1500);
   }
 
   // 开发自检：桌宠不抢焦点（见 runFocusSelfTest）。
