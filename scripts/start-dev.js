@@ -25,14 +25,17 @@
 //   npm start -- --no-gpu --selftest=reminder  提醒呈现自检（会真的弹一条系统通知）
 //   npm start -- --no-gpu --selftest=settings  日程管理窗口自检（会真的开窗口、写一条日程再删掉）
 //   npm start -- --no-gpu --selftest=1         原有的穿透 + 表情自检
-//   --isolated  用独立的临时 user-data-dir
+//   --isolated  用独立的临时 user-data-dir（每次启动前会先清空）
 //               —— 桌宠是单实例程序，已经开着一个时，再启动会被直接顶掉，
 //                  自检根本不会跑（很容易误判成「通过」），所以跑自检务必加上它。
+//               注意它是「干净」目录：自检会挪桌宠、存位置，复用旧目录会让
+//               结果取决于上次跑剩什么（见下面 isolated 分支的注释）。
 //
 // 环境变量（开发便利）：
 //   PET_OPEN_SETTINGS=1  启动时自动把日程管理窗口开出来（做视觉验收 / 截图用）
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
@@ -70,7 +73,16 @@ for (const arg of passthrough) {
 }
 
 if (isolated) {
-  rest.push(`--user-data-dir=${path.join(os.tmpdir(), 'desktop-pet-selftest')}`);
+  // ⚠ 必须先把上一次的目录删掉再启动，别直接复用。
+  //   自检会拖动桌宠窗口、并把位置存进 userData；如果沿用旧目录，
+  //   桌宠就会停在「上一次自检结束时」的位置上 —— 而窗口尺寸、
+  //   跟设置窗口的重叠面积都跟位置有关，于是自检结果变成
+  //   「取决于上一次跑剩了什么」。
+  //   实测踩到过：设置窗口自检在有旧位置时报「压住桌宠 5.3%」，
+  //   清空目录后是 2.3%（阈值 5%）。
+  const dir = path.join(os.tmpdir(), 'desktop-pet-selftest');
+  fs.rmSync(dir, { recursive: true, force: true });
+  rest.push(`--user-data-dir=${dir}`);
 }
 
 const args = ['.', ...extra, ...rest];
