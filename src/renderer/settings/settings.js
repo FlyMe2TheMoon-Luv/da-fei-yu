@@ -25,9 +25,15 @@ const el = {
   wdList: document.getElementById('wd-list'),
   formError: document.getElementById('form-error'),
   list: document.getElementById('list'),
+  listWrap: document.querySelector('.list-wrap'),
   empty: document.getElementById('empty'),
+  week: document.getElementById('week'),
+  weekHead: document.getElementById('week-head'),
+  weekGrid: document.getElementById('week-grid'),
+  weekCanvas: document.getElementById('week-canvas'),
   btnAdd: document.getElementById('btn-add'),
   btnPreview: document.getElementById('btn-preview'),
+  btnWeek: document.getElementById('btn-week'),
   btnCancel: document.getElementById('btn-cancel'),
   btnSave: document.getElementById('btn-save'),
 };
@@ -40,6 +46,12 @@ const REPEAT_LABEL = { once: '只一次', daily: '每天', weekdays: '工作日'
 let items = [];
 let editingId = null;    // null = 正在新增；否则是正在改的那条 id
 let pendingDelete = null; // 「删」要按两下才真删，这里记着第一下的状态
+let mode = 'list';        // 'list' | 'week'
+let weekData = null;      // 最近一次从主进程拿到的周视图布局
+
+// 每小时的像素高度。方块的位置和高度都由这个值乘出来 ——
+// 比例是主进程算的（week.js），像素才是界面的事。
+const HOUR_H = 40;
 
 // ---------- 小工具 ----------
 
@@ -147,6 +159,115 @@ async function load() {
   const list = await api.list();
   items = Array.isArray(list) ? list : [];
   renderList();
+  if (mode === 'week') await loadWeek(); // 周视图开着时，改完日程顺手把它也刷新
+}
+
+// ---------- 周视图 ----------
+
+// 把主进程算好的布局画出来。
+// ⚠ 这里**不做任何日期运算**：哪天有哪些方块、方块从几点到几点、什么颜色，
+//   全部是主进程给的。界面只把 0~1 的比例乘成像素。
+function renderWeek(data) {
+  if (!data || !Array.isArray(data.days) || !data.axis) return;
+
+  const { startHour, endHour } = data.axis;
+  const gridH = (endHour - startHour) * HOUR_H;
+
+  // ---- 列头：周一到周日，今天那一列标出来 ----
+  el.weekHead.textContent = '';
+  el.weekHead.appendChild(document.createElement('div')); // 左上角空出来给时间刻度
+  for (const d of data.days) {
+    const h = document.createElement('div');
+    h.className = 'day-head' + (d.isToday ? ' today' : '');
+    h.textContent = d.label;
+    el.weekHead.appendChild(h);
+  }
+
+  // ---- 网格 ----
+  el.weekCanvas.textContent = '';
+
+  // 时间刻度列
+  const hourCol = document.createElement('div');
+  hourCol.className = 'hour-col';
+  hourCol.style.height = gridH + 'px';
+  for (let h = startHour; h < endHour; h++) {
+    const cell = document.createElement('div');
+    cell.className = 'hour';
+    cell.style.height = HOUR_H + 'px';
+    cell.textContent = `${String(h).padStart(2, '0')}:00`;
+    hourCol.appendChild(cell);
+  }
+  el.weekCanvas.appendChild(hourCol);
+
+  // 七天，每天一列
+  for (const d of data.days) {
+    const col = document.createElement('div');
+    col.className = 'day-col' + (d.isToday ? ' today' : '');
+    col.style.height = gridH + 'px';
+
+    // 每小时的空白格（点它新建日程）—— 先铺，方块后铺，方块自然压在上面
+    for (let h = startHour; h < endHour; h++) {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.style.top = (h - startHour) * HOUR_H + 'px';
+      slot.style.height = HOUR_H + 'px';
+      slot.dataset.day = d.key;
+      slot.dataset.hour = String(h);
+      col.appendChild(slot);
+    }
+
+    for (const b of d.blocks) {
+      const blk = document.createElement('div');
+      blk.className = 'blk' + (b.kind === 'point' ? ' point' : '') + (b.enabled ? '' : ' off');
+      blk.dataset.color = b.color;
+      blk.dataset.id = b.id;
+      blk.style.top = b.topRatio * gridH + 'px';
+      // 时段用比例算高度；时间点固定 22px 的扁条（最矮也给 22，不然一条线看不清）
+      blk.style.height = (b.kind === 'point' ? 22 : Math.max(22, b.heightRatio * gridH)) + 'px';
+      blk.title = `${b.title}　${timeText(b)}　${b.repeatText}`;
+
+      const t = document.createElement('span');
+      t.className = 'blk-title';
+      t.textContent = b.title; // ★ textContent：标题是主人自己输的，绝不当 HTML 解析
+      blk.appendChild(t);
+
+      col.appendChild(blk);
+    }
+
+    el.weekCanvas.appendChild(col);
+  }
+
+  // 打开时自动滚到「今天最早的日程」；今天没事就滚到 08:00，别让人对着半夜的空网格
+  const today = data.days.find((d) => d.isToday);
+  const tops = today ? today.blocks.map((b) => b.topRatio) : [];
+  const target = tops.length
+    ? Math.max(0, Math.min(...tops) * gridH - HOUR_H)
+    : Math.max(0, (8 - startHour) * HOUR_H);
+  el.weekGrid.scrollTop = target;
+}
+
+async function loadWeek() {
+  weekData = await api.weekData();
+  renderWeek(weekData);
+}
+
+// 只负责「哪块显示、按钮上写什么」——窗口尺寸是主进程的事
+function applyMode() {
+  const isWeek = mode === 'week';
+  el.week.classList.toggle('hidden', !isWeek);
+  el.listWrap.classList.toggle('hidden', isWeek);
+  el.btnWeek.textContent = isWeek ? '列表' : '周视图';
+}
+
+async function setMode(next) {
+  mode = next === 'week' ? 'week' : 'list';
+  applyMode();
+  await api.setMode(mode); // 主进程换窗口尺寸并重新摆位
+  if (mode === 'week') await loadWeek();
+}
+
+async function toggleMode() {
+  await setMode(mode === 'week' ? 'list' : 'week');
 }
 
 // ---------- 单个日程的操作 ----------
@@ -281,6 +402,15 @@ el.btnCancel.addEventListener('click', closeForm);
 el.btnSave.addEventListener('click', onSave);
 el.repeat.addEventListener('change', syncRepeatRows);
 el.kind.addEventListener('change', syncKindRows);
+el.btnWeek.addEventListener('click', toggleMode);
+
+// 主进程换完窗口尺寸后的回执 —— 以它为准（万一以后有别的入口也能切模式）
+if (api.onMode) {
+  api.onMode((m) => {
+    mode = m === 'week' ? 'week' : 'list';
+    applyMode();
+  });
+}
 
 el.btnPreview.addEventListener('click', async () => {
   const res = await api.preview();

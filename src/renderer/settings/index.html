@@ -270,6 +270,107 @@
       font-size: 12px;
     }
 
+    /* ---------- 周视图 ---------- */
+    /* 8 个色：方块按「标题」稳定取色（同一个标题永远同色，见 week.js 的 colorOf） */
+    #week {
+      --c-blue: #3b82f6;
+      --c-teal: #14b8a6;
+      --c-amber: #f59e0b;
+      --c-pink: #ec4899;
+      --c-purple: #8b5cf6;
+      --c-green: #22c55e;
+      --c-coral: #fb7185;
+      --c-gray: #94a3b8;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 0 18px 18px;
+    }
+    #week.hidden { display: none; }
+    .list-wrap.hidden { display: none; }
+
+    #week-head {
+      flex: none;
+      display: grid;
+      grid-template-columns: 52px repeat(7, 1fr);
+    }
+    #week-head .day-head {
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      padding: 4px 0 6px;
+    }
+    #week-head .day-head.today { color: var(--primary-dark); font-weight: 600; }
+
+    #week-grid {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    #week-canvas {
+      display: grid;
+      grid-template-columns: 52px repeat(7, 1fr);
+    }
+
+    /* 左边那一条时间刻度 */
+    .hour-col { position: relative; }
+    .hour {
+      font-size: 10.5px;
+      color: var(--muted);
+      text-align: right;
+      padding-right: 6px;
+      border-top: 1px solid var(--line);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .day-col {
+      position: relative;
+      border-left: 1px solid var(--line);
+    }
+    .day-col.today { background: #eff6ff; }
+
+    /* 空白格：点一下就在这一格新建日程。z-index 低于方块，不会挡住点方块 */
+    .slot {
+      position: absolute;
+      left: 0;
+      right: 0;
+      border-top: 1px solid #f1f3f5;
+      z-index: 1;
+      cursor: pointer;
+    }
+    .slot:hover { background: #f8fafc; }
+
+    /* 方块：时段是高的长方体，时间点是扁的（.point 只有 22px 高） */
+    .blk {
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      z-index: 2;
+      border-radius: 6px;
+      padding: 2px 5px;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: pointer;
+      color: #fff;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .18);
+    }
+    .blk.point { height: 22px; }
+    .blk.off { opacity: .45; } /* 关掉的日程：变淡，但还在（和列表一致） */
+    .blk[data-color="blue"]   { background: var(--c-blue); }
+    .blk[data-color="teal"]   { background: var(--c-teal); }
+    .blk[data-color="amber"]  { background: var(--c-amber); }
+    .blk[data-color="pink"]   { background: var(--c-pink); }
+    .blk[data-color="purple"] { background: var(--c-purple); }
+    .blk[data-color="green"]  { background: var(--c-green); }
+    .blk[data-color="coral"]  { background: var(--c-coral); }
+    .blk[data-color="gray"]   { background: var(--c-gray); }
+
     /* ---------- 空状态 ---------- */
     #empty {
       margin: 34px 18px;
@@ -291,6 +392,7 @@
   <div class="toolbar">
     <button id="btn-add" class="primary">＋ 添加日程</button>
     <button id="btn-preview" class="ghost" title="立刻弹一次提醒，看看效果">预览提醒效果</button>
+    <button id="btn-week" class="ghost" title="按周一到周日看看这一周的安排">周视图</button>
   </div>
 
   <!-- 添加 / 编辑共用同一块表单，靠 editingId 区分 -->
@@ -355,6 +457,13 @@
       <span class="big">🗓</span>
       还没有日程。<br />点上面的「＋ 添加日程」试试。
     </div>
+  </div>
+
+  <!-- 周视图：固定周一到周日，不翻页（主人拍板）。
+       列头 + 可滚动的网格；方块的位置和颜色都由主进程算好（比例），这里只乘像素。 -->
+  <div id="week" class="hidden">
+    <div id="week-head"></div>
+    <div id="week-grid"><div id="week-canvas"></div></div>
   </div>
 
   <script src="./settings.js"></script>

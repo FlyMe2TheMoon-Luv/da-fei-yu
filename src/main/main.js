@@ -1625,6 +1625,94 @@ async function runSettingsSelfTest() {
     ` → 还是 ${countBeforeC} 条`);
   ok(schedules.list().every((x) => x.title !== '自检·倒流'), '★ 「自检·倒流」确实没被写进文件');
 
+  // ===== ⑤d 周视图：七列 + 时间刻度 + 彩色方块 =====
+  // 「周视图」是 v2 的主体需求：一眼看见一周的安排，不同颜色的方块代表不同的事。
+  log('⑤d 周视图（点「周视图」按钮 → 七列方块）');
+  // 主进程还没实现 SIZES 时用计划里的标称值兜底，这样这条断言会「红」而不是把自检搞崩
+  const WEEK_SIZE = (settingsWindow.SIZES && settingsWindow.SIZES.week) || { w: 1000, h: 680 };
+  const weekOpen = await sw.webContents.executeJavaScript(`(async () => {
+    const btn = document.getElementById('btn-week');
+    if (!btn) return { missingBtn: true };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 900));
+
+    const heads = [...document.querySelectorAll('#week-head .day-head')].map((h) => h.textContent);
+    const blks = [...document.querySelectorAll('#week-grid .blk')];
+    const heightOf = (title) => {
+      const b = blks.find((x) => {
+        const t = x.querySelector('.blk-title');
+        return t && t.textContent === title;
+      });
+      return b ? Math.round(b.getBoundingClientRect().height) : null;
+    };
+    return {
+      weekShown: !document.getElementById('week').classList.contains('hidden'),
+      listHidden: document.querySelector('.list-wrap').classList.contains('hidden'),
+      heads,
+      blockCount: blks.length,
+      spanH: heightOf('自检·时段'),
+      pointH: heightOf('自检·日程'),
+    };
+  })()`);
+
+  if (weekOpen.missingBtn) {
+    ok(false, '★ 工具栏上没有「周视图」按钮（#btn-week）—— 周视图根本打不开');
+  } else {
+    ok(weekOpen.weekShown === true && weekOpen.listHidden === true,
+      '★ 周视图容器出现了、列表容器藏起来了');
+    // ★ 拿 DOM 里真实的列头文本比，不要比我们自己生成的那个数组 —— 那样等于自己验自己
+    ok(weekOpen.heads.join() === '周一,周二,周三,周四,周五,周六,周日',
+      '★ 正好七列，从左到右是周一到周日', ` → ${weekOpen.heads.join(' / ')}`);
+  }
+
+  {
+    const b = sw.getBounds();
+    const dw = Math.abs(b.width - WEEK_SIZE.w);
+    const dh = Math.abs(b.height - WEEK_SIZE.h);
+    ok(dw <= 2 && dh <= 2, `★ 窗口跟着变成周视图的尺寸（标称 ${WEEK_SIZE.w}×${WEEK_SIZE.h}，允许 ±2 像素）`,
+      ` → 实际 ${b.width}×${b.height}`);
+  }
+
+  // ★ 这条是「时段用高的长方体、时间点用扁的」这条需求的**唯一证据**：
+  //   同一天里，时段那一块必须比时间点那一块高。
+  // ⚠ 必须用 typeof 判「量到了没有」，不能写 `!== null`：
+  //   注入的脚本走 early-return 时字段是 undefined，而 `undefined !== null` 是 true，
+  //   断言会**假通过** —— 这正是「验证方式本身也可能是假的」那种坑。
+  const gotHeights = typeof weekOpen.spanH === 'number' && typeof weekOpen.pointH === 'number';
+  ok(gotHeights,
+    '周视图上找得到「自检·时段」和「自检·日程」两块',
+    ` → 时段高 ${weekOpen.spanH}px · 时间点高 ${weekOpen.pointH}px`);
+  ok(gotHeights && weekOpen.spanH > weekOpen.pointH,
+    '★ 时段的方块比时间点的方块高（时段是长方体、时间点是扁条）',
+    ` → ${weekOpen.spanH}px vs ${weekOpen.pointH}px`);
+
+  // ★ 负对照：切回列表 —— 周视图要藏起来、列表要回来、窗口尺寸也要缩回去
+  log('⑤d′ ★ 负对照：再点一下切回列表');
+  const weekBack = await sw.webContents.executeJavaScript(`(async () => {
+    const btn = document.getElementById('btn-week');
+    if (!btn) return { missingBtn: true };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 900));
+    return {
+      weekHidden: document.getElementById('week').classList.contains('hidden'),
+      listShown: !document.querySelector('.list-wrap').classList.contains('hidden'),
+      btnText: btn.textContent.trim(),
+    };
+  })()`);
+  if (weekBack.missingBtn) {
+    ok(false, '★ 负对照没法做（没有「周视图」按钮）');
+  } else {
+    ok(weekBack.weekHidden === true && weekBack.listShown === true,
+      '★ 负对照：切回列表后周视图藏起来、列表回来了');
+  }
+  {
+    const b = sw.getBounds();
+    const dw = Math.abs(b.width - settingsWindow.WIN_W);
+    const dh = Math.abs(b.height - settingsWindow.WIN_H);
+    ok(dw <= 2 && dh <= 2, `★ 负对照：窗口尺寸缩回列表的 ${settingsWindow.WIN_W}×${settingsWindow.WIN_H}`,
+      ` → 实际 ${b.width}×${b.height}`);
+  }
+
   // ===== ⑥ 开关：临时关掉 / 打开 =====
   log('⑥ 开关（临时关掉，不删除）');
   if (testId) {

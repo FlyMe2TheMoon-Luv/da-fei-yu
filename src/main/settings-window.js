@@ -20,18 +20,49 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const schedules = require('./schedules');
+const week = require('./week');
 const { placeNear } = require('./place');
 
 const HTML = path.join(__dirname, '..', 'renderer', 'settings', 'index.html');
 const PRELOAD = path.join(__dirname, 'preload-settings.js');
 
-const WIN_W = 480;
-const WIN_H = 640;
+// v2：这个窗口有「列表 / 周视图」两种模式，每种一个尺寸。
+// 周视图要放下七列 + 时间刻度，所以宽得多。
+const SIZES = {
+  list: { w: 480, h: 640 },
+  week: { w: 1000, h: 680 },
+};
+// WIN_W / WIN_H 是「列表模式」的别名 —— 现有自检和 placeNear 复算都在用，别删。
+const WIN_W = SIZES.list.w;
+const WIN_H = SIZES.list.h;
 
 let win = null;
 let inited = false;
+let mode = 'list';         // 'list' | 'week'
 let onPreview = null;      // 由 main.js 注入：点「预览提醒效果」时调 reminder.present
 let getPetWindow = () => null; // 由 main.js 注入：要临时把桌宠「降一层」
+
+// ---------- 窗口尺寸 ----------
+
+// 模式对应的窗口尺寸。小屏笔记本上按 90% 缩，但不小于列表尺寸
+// （再小就既放不下七列、也不比列表模式好用了）。
+function sizeOf(m, workArea) {
+  const s = SIZES[m] || SIZES.list;
+  let w = s.w;
+  let h = s.h;
+  if (workArea) {
+    if (w > workArea.width) w = Math.max(SIZES.list.w, Math.round(workArea.width * 0.9));
+    if (h > workArea.height) h = Math.max(SIZES.list.h, Math.round(workArea.height * 0.9));
+  }
+  return { w, h };
+}
+
+// 当前窗口该在哪块屏的工作区里。桌宠不在（被隐藏 / 已销毁）就退回主屏。
+function workAreaFor() {
+  const pet = getPetWindow();
+  if (pet && !pet.isDestroyed()) return screen.getDisplayMatching(pet.getBounds()).workArea;
+  return screen.getPrimaryDisplay().workArea;
+}
 
 // ---------- 临时把桌宠降一层 ----------
 // 起因：桌宠是 alwaysOnTop('screen-saver') 层级，比普通窗口高 ——
@@ -87,21 +118,101 @@ function positionNearPet() {
 
   try {
     const petRect = pet.getBounds();
-    const display = screen.getDisplayMatching(petRect);
-    const { x, y, side, clamped } = placeNear(
-      petRect,
-      { w: WIN_W, h: WIN_H },
-      display.workArea,
-    );
-    win.setBounds({ x, y, width: WIN_W, height: WIN_H });
+    const workArea = workAreaFor();
+    const { w, h } = sizeOf(mode, workArea);
+    const { x, y, side, clamped } = placeNear(petRect, { w, h }, workArea);
+    win.setBounds({ x, y, width: w, height: h });
     console.log(`[settings] 窗口摆到桌宠 ${side}${clamped ? '（被屏幕边挤过）' : ''} → ${x},${y}` +
       ` · 桌宠 ${petRect.x},${petRect.y} ${petRect.width}×${petRect.height}` +
-      ` · 窗口 ${WIN_W}×${WIN_H} · 屏工作区 ${display.workArea.width}×${display.workArea.height}`);
+      ` · 窗口 ${w}×${h}（${mode} 模式） · 屏工作区 ${workArea.width}×${workArea.height}`);
     return { x, y, side, clamped };
   } catch (err) {
     console.error('[settings] 算窗口位置失败，改用默认位置：', err && err.message);
     return null;
   }
+}
+
+// 切换「列表 / 周视图」：换窗口尺寸 → 重新摆位 → 把结果告诉界面。
+// 界面**不做任何尺寸计算**，只负责把内容换掉（渲染进程拿不到屏幕信息）。
+function setMode(next) {
+  mode = next === 'week' ? 'week' : 'list';
+
+  if (!win || win.isDestroyed()) return mode;
+
+  try {
+    // ⚠ 顺序要紧：**先**把最小尺寸放开，**再**写回新尺寸。
+    //   反过来的话，从周视图切回列表时会被「周视图留下的最小尺寸」卡住，窗口缩不回去。
+    win.setMinimumSize(400, 420);
+    const pos = positionNearPet();
+    if (!pos) {
+      // 桌宠不在（算不出位置）时，至少把尺寸换过去，别让界面画在错误的宽度里
+      const { w, h } = sizeOf(mode, workAreaFor());
+      win.setBounds({ width: w, height: h });
+    }
+    win.webContents.send('week:mode', mode);
+    console.log(`[settings] 模式切换 → ${mode}`);
+  } catch (err) {
+    console.error('[settings] 切换模式失败：', err && err.message);
+  }
+
+  return mode;
+}
+
+// ---------- 周视图的数据 ----------
+
+const DOW_LABEL = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+// ⚠ 这份文案和界面里 settings.js 的 repeatText() 是**同一个意思**，暂时有两份。
+//   改一处记得看一眼另一处（之所以不共用，是因为渲染进程不能 require 主进程的模块）。
+function repeatTextOf(it) {
+  if (it.repeat === 'once') return `只一次 · ${it.date}`;
+  if (it.repeat === 'weekly') {
+    const names = (it.weekdays || []).map((n) => (DOW_LABEL[n] || '').slice(1)).join('');
+    return `每周 ${names}`;
+  }
+  return { daily: '每天', weekdays: '工作日' }[it.repeat] || it.repeat;
+}
+
+// 把「这一周怎么画」整个算好交给界面：七天、时间轴、每个方块的位置比例和颜色。
+// 界面只拿 topRatio / heightRatio 去乘自己的像素高度，不做任何日期和数学。
+function weekData() {
+  const items = schedules.list();
+  const now = new Date();
+  const start = week.weekStartOf(now);
+  const axis = week.axisOf(items);
+  const todayKey = schedules.localDateKey(now);
+
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const key = schedules.localDateKey(date);
+    days.push({
+      key,
+      dow: date.getDay(),
+      label: DOW_LABEL[date.getDay()],
+      isToday: key === todayKey,
+      blocks: week.blocksOf(items, date, axis).map((b) => ({
+        // 方块要带够信息，界面点一下就能直接开表单（Task 5）
+        id: b.item.id,
+        title: b.item.title,
+        kind: b.item.kind,
+        time: b.item.time,
+        endTime: b.item.endTime,
+        repeatText: repeatTextOf(b.item),
+        enabled: b.item.enabled,
+        topRatio: b.topRatio,
+        heightRatio: b.heightRatio,
+        color: b.color,
+      })),
+    });
+  }
+
+  return {
+    weekStart: schedules.localDateKey(start),
+    todayKey,
+    axis,
+    days,
+  };
 }
 
 // ---------- 窗口 ----------
@@ -116,6 +227,9 @@ function open() {
   }
 
   console.log('[settings] 打开日程管理窗口');
+
+  // 每次打开都从「列表」开始 —— 行为可预测，也不会让窗口以周视图的大尺寸突然出现
+  mode = 'list';
 
   win = new BrowserWindow({
     width: WIN_W,
@@ -215,6 +329,18 @@ function init(opts = {}) {
   ipcMain.handle('schedules:remove', (_e, id) => schedules.remove(id));
   ipcMain.handle('schedules:toggle', (_e, id) => schedules.toggle(id));
 
+  // ---- 周视图 ----
+  // 返回**已经算好的**布局（七天 + 时间轴 + 方块比例），界面只负责画。
+  ipcMain.handle('week:data', () => {
+    try {
+      return weekData();
+    } catch (err) {
+      console.error('[settings] 算周视图数据失败：', err && err.message);
+      return null;
+    }
+  });
+  ipcMain.handle('week:set-mode', (_e, m) => setMode(m));
+
   // ---- 预览提醒效果 ----
   ipcMain.handle('reminder:preview', async () => {
     if (!onPreview) return { error: '预览暂时不可用' };
@@ -238,4 +364,9 @@ module.exports = {
   // 自检要用：复算「窗口该待在哪」时得知道窗口的标称尺寸
   WIN_W,
   WIN_H,
+  SIZES,
+  sizeOf,
+  setMode,
+  getMode: () => mode,
+  weekData,
 };
