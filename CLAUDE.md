@@ -2,7 +2,7 @@
 
 > 这份文件是给 AI（Claude / WorkBuddy 等）看的项目说明书。
 > **动手写代码前先读它。** 它决定了后续实现会不会跑偏。
-> 最后更新：2026-10-12
+> 最后更新：2026-10-12（阶段 2-3 提醒呈现完成后）
 
 ---
 
@@ -46,17 +46,20 @@ desktop-pet/
 ├─ src/
 │  ├─ main/               ← 主进程：Node 世界，能碰系统
 │  │  ├─ main.js          窗口创建、托盘、位置记忆、生命周期
-│  │  ├─ preload.js       ← 唯一的安全桥梁
+│  │  ├─ preload.js       ← 桌宠窗口的安全桥梁
+│  │  ├─ preload-bubble.js ← 气泡窗口的安全桥梁（只暴露「读内容 / 点知道了」）
 │  │  ├─ store.js         本地 JSON 读写（一律写 userData）
 │  │  ├─ schedules.js     日程数据层：增删改查 + 校验 + 存盘（阶段 2-1）
 │  │  ├─ scheduler.js     日程轮询引擎：30 秒轮询 + 去重 + 5 分钟宽限（阶段 2-2）
+│  │  ├─ reminder.js      提醒呈现：气泡窗口 + 桌宠表演 + 系统通知兜底（阶段 2-3）
 │  │  └─ focus/           专注模式（阶段 3）
 │  ├─ renderer/           ← 界面：浏览器世界，碰不到系统
 │  │  ├─ pet/             桌宠本体
 │  │  │  ├─ index.html
-│  │  │  ├─ renderer.js   Live2D 渲染 + 裁切 + 拖拽 + 鼠标穿透
+│  │  │  ├─ renderer.js   Live2D 渲染 + 裁切 + 拖拽 + 鼠标穿透 + 提醒表演
 │  │  │  ├─ vendor/       第三方运行时（PIXI / Cubism Core / pixi-live2d-display）
 │  │  │  └─ model/        Live2D 模型（属「素材」，见 LICENSE-ASSETS.md）
+│  │  ├─ bubble/          提醒气泡（阶段 2-3）：透明小窗口 268×112
 │  │  └─ settings/        设置窗口（阶段 4）
 │  └─ assets/             静态图片、音效
 │     ├─ pet/             三视图 PNG + icon
@@ -92,7 +95,7 @@ desktop-pet/
 |---|---|---|
 | 0 | 环境准备（项目骨架 + CLAUDE.md） | ✅ 已完成 |
 | 1 | 桌宠外壳（透明窗口、拖拽、穿透、托盘、位置记忆、Live2D 形象） | ✅ 已完成 |
-| 2 | 日程提醒 | 🚧 进行中（2-1 数据层 ✅ · 2-2 调度引擎 ✅） |
+| 2 | 日程提醒 | 🚧 进行中（2-1 数据层 ✅ · 2-2 调度引擎 ✅ · 2-3 提醒呈现 ✅ · 下一步 2-4 编辑入口） |
 | 3 | 专注模式 | ⬜ 未开始 |
 | 4 | 设置界面 | ⬜ 未开始 |
 | 5 | 打包发布 | ⬜ 未开始 |
@@ -140,18 +143,30 @@ desktop-pet/
     窗口继续保持穿透，鼠标事件直接穿到桌面。`refreshHit()` 里用
     `elementFromPoint` + `[data-ui]` 兜底；另外压在控件上时不能进入拖拽。
     详见 `HANDOFF.md` 第六节第 21 条。
+18. **提醒气泡窗口：`focusable: false` 必须配 `showInactive()`，两个都要** ——
+    否则每次提醒都会把主人正在打字的窗口顶掉。代价是拿不到 focus 事件，
+    「气泡还在不在」得自己用状态变量管。
+    另一个坑：**网页加载完之前 `webContents.send()` 会丢**，必须先 await
+    `did-finish-load`；加载失败要**销毁重建**，否则那个 Promise 永远是 false，
+    以后气泡静默不弹且不报错。详见 `HANDOFF.md` 第六节第 22 条。
+19. **桌宠「表演」完必须恢复视线跟随** —— 提醒时切表情 + 放动作，期间要摘掉视线跟随，
+    但必须定时恢复（`autoInteract = true` + `resetExpression()`），
+    否则「眼睛跟着鼠标转」的招牌动作永久丢失且不报错。详见 `HANDOFF.md` 第六节第 23 条。
 
 ---
 
 ## 七、常用命令
 
 ```bash
-npm start              # 启动桌宠（开发）
-npm run test:schedules # 日程数据层自检（阶段 2-1，独立脚本，随时能跑）
-npm run test:scheduler # 调度引擎自检（阶段 2-2，纯逻辑、秒出结果）
-npm run test:gaze      # 拖拽时视线跟随开关自检（回归哨兵，桌宠开着也能跑）
-npm run test:exit      # 退出按钮自检（回归哨兵）
-npm run build          # 打包（electron-builder）
+npm start                    # 启动桌宠（开发）
+npm start -- --no-gpu        # 无 GPU 沙箱环境用这条
+npm run test:schedules       # 日程数据层自检（阶段 2-1，独立脚本，随时能跑）
+npm run test:scheduler       # 调度引擎自检（阶段 2-2，纯逻辑、秒出结果）
+npm run test:reminder        # 气泡位置自检（阶段 2-3，纯数学、秒出结果）
+npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）
+npm run test:gaze            # 拖拽时视线跟随开关自检（回归哨兵，桌宠开着也能跑）
+npm run test:exit            # 退出按钮自检（回归哨兵）
+npm run build                # 打包（electron-builder）
 ```
 
 ---
