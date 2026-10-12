@@ -1,8 +1,10 @@
-// src/preload.js
+// src/main/preload.js
 // 唯一的安全桥梁：渲染进程碰不到系统，只能用这里显式暴露的接口。
-// 阶段 0 先放一个空壳，后续所有 IPC 通道都从这里挂出去。
+//
+// 约定：暴露的每个方法都要在 main.js 里有对应的 ipcMain 处理。
+// 阶段 1 用到的通道全部以 pet: 开头。
 
-const { contextBridge } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('petAPI', {
   // 仅用于自检：确认 preload 已生效
@@ -11,4 +13,27 @@ contextBridge.exposeInMainWorld('petAPI', {
     chrome: process.versions.chrome,
     node: process.versions.node,
   },
+
+  // ---- 拖拽 ----
+  // 传的是鼠标在屏幕上的坐标（渲染进程拿到的 screenX/screenY）
+  dragStart: (p) => ipcRenderer.send('pet:drag-start', { x: p.x, y: p.y }),
+  dragMove: (p) => ipcRenderer.send('pet:drag-move', { x: p.x, y: p.y }),
+  dragEnd: () => ipcRenderer.send('pet:drag-end'),
+
+  // ---- 动态鼠标穿透 ----
+  // true = 让鼠标穿过去点到桌面；false = 桌宠接住鼠标
+  setClickThrough: (through) => ipcRenderer.send('pet:set-click-through', Boolean(through)),
+
+  // ---- 托盘相关动作（渲染进程也可能要触发）----
+  hide: () => ipcRenderer.send('pet:hide'),
+  quit: () => ipcRenderer.send('pet:quit'),
+
+  // ---- 右键菜单：弹出和托盘一样的菜单 ----
+  showMenu: () => ipcRenderer.send('pet:show-menu'),
+
+  // ---- 模型裁切校准的缓存 ----
+  // 量一次角色真实范围要采样一整个待机循环（约 4 秒），太慢，
+  // 所以量完存起来，下次启动直接用。
+  getBounds: (key) => ipcRenderer.invoke('pet:get-bounds', key),
+  saveBounds: (key, bounds) => ipcRenderer.send('pet:save-bounds', key, bounds),
 });

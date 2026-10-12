@@ -39,21 +39,34 @@ desktop-pet/
 ├─ CLAUDE.md              ← 本文件，项目说明书
 ├─ HANDOFF.md             ← 项目交接文件
 ├─ PLAN.md                ← 完整实现方案
+├─ LICENSE                ← 代码：MIT
+├─ LICENSE-ASSETS.md      ← 素材：CC BY-NC-SA 4.0
+├─ CREDITS.md             ← 素材署名链（三位权利人，不能漏）
 ├─ src/
 │  ├─ main/               ← 主进程：Node 世界，能碰系统
-│  │  ├─ main.js          窗口创建、托盘、生命周期
+│  │  ├─ main.js          窗口创建、托盘、位置记忆、生命周期
 │  │  ├─ preload.js       ← 唯一的安全桥梁
-│  │  ├─ scheduler.js     日程轮询引擎
-│  │  ├─ store.js         本地数据读写
-│  │  └─ focus/
-│  │     ├─ hosts.js      hosts 文件读写
-│  │     ├─ process.js    进程扫描与查杀
-│  │     └─ elevate.js    提权调用
+│  │  ├─ store.js         本地 JSON 读写（一律写 userData）
+│  │  ├─ scheduler.js     日程轮询引擎（阶段 2）
+│  │  └─ focus/           专注模式（阶段 3）
 │  ├─ renderer/           ← 界面：浏览器世界，碰不到系统
 │  │  ├─ pet/             桌宠本体
-│  │  └─ settings/        设置窗口
-│  └─ assets/             图片、动图、音效
-└─ scripts/               需要管理员权限的 PowerShell 脚本
+│  │  │  ├─ index.html
+│  │  │  ├─ renderer.js   Live2D 渲染 + 裁切 + 拖拽 + 鼠标穿透
+│  │  │  ├─ vendor/       第三方运行时（PIXI / Cubism Core / pixi-live2d-display）
+│  │  │  └─ model/        Live2D 模型（属「素材」，见 LICENSE-ASSETS.md）
+│  │  └─ settings/        设置窗口（阶段 4）
+│  └─ assets/             静态图片、音效
+│     ├─ pet/             三视图 PNG + icon
+│     └─ tray.png         托盘图标（由 make-tray-icon 生成）
+├─ scripts/               开发工具（都不是运行时依赖）
+│  ├─ start-dev.js        启动器：抹平环境坑
+│  ├─ sync-vendor.js      同步第三方运行时到 vendor/
+│  ├─ check-assets.js     素材体检：验图片是不是真透明
+│  ├─ make-tray-icon.js   生成方形托盘图标
+│  ├─ shot.js             截屏（验收用）
+│  └─ lib/png.js          零依赖 PNG 解码/编码
+└─ spike/                 一次性验证台，可随时删（见 spike/README.md）
 ```
 
 ---
@@ -76,8 +89,8 @@ desktop-pet/
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 | 环境准备（项目骨架 + CLAUDE.md） | ✅ 已完成 |
-| 1 | 桌宠外壳（透明窗口、拖拽、托盘） | ⬜ 未开始 |
-| 2 | 日程提醒 | ⬜ 未开始 |
+| 1 | 桌宠外壳（透明窗口、拖拽、穿透、托盘、位置记忆、Live2D 形象） | ✅ 已完成 |
+| 2 | 日程提醒 | ⬜ 未开始 ← **下一步** |
 | 3 | 专注模式 | ⬜ 未开始 |
 | 4 | 设置界面 | ⬜ 未开始 |
 | 5 | 打包发布 | ⬜ 未开始 |
@@ -94,6 +107,26 @@ desktop-pet/
 4. **杀毒软件会误报** —— "改 hosts + 杀进程"的 exe 行为特征和恶意软件高度重合，提前加白名单。
 5. **别把自己杀了** —— 黑名单校验要屏蔽 `electron.exe` / `node.exe` 和自身进程名。
 6. **专注模式是自律工具** —— 任务管理器照样能绕，别往"监控软件"方向做，也别用来限制别人。
+
+### Live2D / 渲染相关的坑（2026-10-12 阶段 1 实测）
+
+7. **`pixi-live2d-display` 只兼容 PIXI 6.x** —— 它最新版停在 0.4.0（2022 年），
+   而 PIXI 已经到 8.x。**不要 `npm update`**，锁死在 `pixi.js@6.5.10`。
+8. **PIXI 6 需要 CSP 放开 `'unsafe-eval'`** —— 它用 `new Function()` 现场拼 shader。
+   渲染进程不加载远程内容，风险可控；想收紧可改用 `@pixi/unsafe-eval`。
+9. **`--disable-software-rasterizer` 会让 WebGL 直接罢工** —— 无 GPU 环境要用
+   `--disable-gpu --enable-unsafe-swiftshader --no-sandbox`（启动器已内置）。
+10. **`capturePage()` 抓不到 WebGL 内容** —— 截出来是空白。要拿画面只能
+    `canvas.toDataURL()`；要抓整个桌面用 `desktopCapturer`。
+11. **透明窗口 + WebGL 必须 `backgroundThrottling: false`** —— 否则窗口失焦后动画像卡死。
+12. **鼠标穿透要配 `{ forward: true }`** —— 否则穿透期间渲染进程收不到 mousemove，
+    就永远判定不出该不该恢复穿透。
+13. **命中判定要用迟滞** —— 角色一直在动（呼吸、甩尾巴），鼠标停在轮廓边不动时，
+    单阈值会让穿透疯狂开关。所以「进要够实、出要够空」，中间地带维持原状。
+14. **Live2D 模型自带的是正方形空画布** —— `c_0120` 是 4068×4068，角色只占约 64%，
+    照方框摆窗口会虚胖一大圈。必须实测角色边界再裁（见 `renderer.js` 的 `setupFit`）。
+15. **只量一帧不够** —— 待机动作会让角色比首帧宽出 8%，实测能超出 20+ 像素。
+    要采样一整个动作循环取并集，结果缓存到 `userData/model-bounds.json`。
 
 ---
 

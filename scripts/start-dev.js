@@ -10,6 +10,7 @@
 // 坑 2 · 没有可用 GPU
 //   虚拟机 / 远程桌面 / 无显卡驱动时，Chromium 的 GPU 进程会崩溃并 FATAL 退出。
 //   → 传 `--no-gpu` 即可：npm start -- --no-gpu
+//   注意这条会顺带打开 SwiftShader 软件渲染，保证 WebGL 还能用（桌宠靠它渲染 Live2D）。
 //
 // 用法：
 //   npm start                 正常启动
@@ -25,7 +26,11 @@ const passthrough = process.argv.slice(2);
 const extra = [];
 
 if (passthrough.includes('--no-gpu')) {
-  extra.push('--disable-gpu', '--disable-software-rasterizer', '--no-sandbox');
+  // 注意：这里**不能**用 --disable-software-rasterizer。
+  // 它会把软件光栅化也一起关掉，于是在没有独显的环境里 WebGL 直接不可用，
+  // 桌宠会白屏并报 "WebGL unsupported"。
+  // 正确组合是：禁用硬件 GPU + 允许 SwiftShader 软件渲染兜底。
+  extra.push('--disable-gpu', '--enable-unsafe-swiftshader', '--no-sandbox');
 }
 
 const args = ['.', ...extra, ...passthrough.filter((a) => a !== '--no-gpu')];

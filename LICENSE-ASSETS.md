@@ -7,8 +7,15 @@
 
 ## 一、覆盖范围
 
-- `src/assets/pet/` 下的全部图片
+- `src/assets/pet/` 下的全部图片（三视图 PNG）
+- `src/assets/tray.png`（托盘图标，由三视图裁切生成）
+- `src/renderer/pet/model/` 下的 **Live2D 模型全套**（`.moc3` / 贴图 / 物理 / 表情 / 动作）
 - `design/` 下的全部图片
+
+> 为什么 Live2D 模型放在 `src/renderer/pet/model/` 而不是 `src/assets/`：
+> 它是一整包必须按相对路径加载的运行时文件（`.moc3` + 贴图 + 几十个 json），
+> 跟渲染器放在一起路径最简单，也避免 `file://` 跨目录取文件时的 CSP 麻烦。
+> **它仍然属于「素材」，受本文件约束。**
 
 ## 二、许可协议
 

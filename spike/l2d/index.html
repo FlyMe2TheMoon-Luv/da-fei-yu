@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:" />
+  <title>Live2D 验证</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    #wrap { position: absolute; inset: 0; }
+    canvas { display: block; }
+    /* 参照物：四个角画红色细角标。
+       如果截图里能看到这四个角标、且它们之间是空的，说明透明是生效的。 */
+    .mark { position: absolute; width: 28px; height: 28px; pointer-events: none; }
+    .mark.tl { top: 6px; left: 6px; border-top: 3px solid #e24b4a; border-left: 3px solid #e24b4a; }
+    .mark.tr { top: 6px; right: 6px; border-top: 3px solid #e24b4a; border-right: 3px solid #e24b4a; }
+    .mark.bl { bottom: 6px; left: 6px; border-bottom: 3px solid #e24b4a; border-left: 3px solid #e24b4a; }
+    .mark.br { bottom: 6px; right: 6px; border-bottom: 3px solid #e24b4a; border-right: 3px solid #e24b4a; }
+  </style>
+</head>
+<body>
+  <div id="wrap"></div>
+  <div class="mark tl"></div>
+  <div class="mark tr"></div>
+  <div class="mark bl"></div>
+  <div class="mark br"></div>
+
+  <script src="vendor/pixi.min.js"></script>
+  <script src="vendor/live2dcubismcore.min.js"></script>
+  <script src="vendor/cubism4.min.js"></script>
+  <script src="test.js"></script>
+</body>
+</html>

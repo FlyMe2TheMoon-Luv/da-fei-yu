@@ -6,12 +6,18 @@
   "scripts": {
     "start": "node scripts/start-dev.js",
     "start:raw": "electron .",
+    "sync-vendor": "node scripts/sync-vendor.js",
+    "check-assets": "node scripts/check-assets.js",
+    "make-tray-icon": "node scripts/make-tray-icon.js",
+    "shot": "electron scripts/shot.js",
     "build": "electron-builder"
   },
   "author": "",
   "license": "MIT",
   "devDependencies": {
     "electron": "^44.7.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10"
   }
 }

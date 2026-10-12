@@ -15,6 +15,9 @@ yarn-error.log*
 *.tmp
 *.bak
 
+# 开发截图产物（npm run shot）
+tmp/
+
 # 编辑器 / 系统
 .vscode/
 .idea/
