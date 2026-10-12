@@ -54,6 +54,48 @@ function hideHint() {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// ---------- 拖拽性能探针 ----------
+// 起因：「拖动窗口时人物卡顿抽搐」。
+// 这种毛病肉眼说不清，得量。用 requestAnimationFrame 记录帧间隔 ——
+// 拖拽期间如果帧间隔明显变大，说明主进程搬窗口搬得太频繁，把渲染挤掉了；
+// 如果帧间隔正常，那卡顿就不是掉帧，得往别处查（比如角色视线跟着窗口抖）。
+// 只统计「拖拽期间」的样本，平时不占开销。
+const frameGap = { on: false, last: performance.now(), samples: [] };
+
+(function frameGapTick() {
+  const now = performance.now();
+  const gap = now - frameGap.last;
+  frameGap.last = now;
+  if (frameGap.on) frameGap.samples.push(gap);
+  requestAnimationFrame(frameGapTick);
+})();
+
+function frameGapStats(samples = frameGap.samples) {
+  if (!samples.length) return null;
+  const sorted = [...samples].sort((a, b) => a - b);
+  return {
+    n: samples.length,
+    med: sorted[Math.floor(sorted.length / 2)],
+    max: sorted[sorted.length - 1],
+    // 30fps 的基准间隔是 33.3ms，超过 50ms 就算肉眼可见的掉帧
+    over50: samples.filter((g) => g > 50).length,
+  };
+}
+
+// ---------- 退出按钮 ----------
+// 走的是和托盘菜单「退出桌宠」同一条通道（pet:quit），主进程收到后真退出。
+// 渲染进程不碰系统，只负责把「用户点了退出」这件事报上去（硬性约定第 1 条）。
+function setupExitButton() {
+  const btn = document.getElementById('btn-exit');
+  if (!btn) return;
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    log('点了退出按钮');
+    if (window.petAPI && window.petAPI.quit) window.petAPI.quit();
+  });
+}
+
 // ---------- 主流程 ----------
 
 (async () => {
@@ -97,7 +139,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await setupFit(app, model);
 
     // ===== 5. 交互 =====
-    setupInteractions(app, model);
+    const interactions = setupInteractions(app, model);
+    setupExitButton();
 
     // ===== 6. 启动后盯一会儿边缘，确认动作没把角色顶出窗口 =====
     watchEdges(app);
@@ -106,7 +149,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     // 给开发自检用的出口（主进程用 executeJavaScript 跑检查时会用到）。
     // 只是把本地对象挂出来，不增加任何权限。
-    window.__petDebug = { app, model, measureLocalBounds, edgeHits, EXPRESSIONS };
+    window.__petDebug = {
+      app, model, measureLocalBounds, edgeHits, EXPRESSIONS, frameGap, frameGapStats,
+      hitState: interactions.getHitState, // 自检用：看穿透判定和鼠标压在哪
+    };
 
     log('就绪');
   } catch (err) {
@@ -317,10 +363,13 @@ function watchEdges(app) {
 
 function setupInteractions(app, model) {
   let overPet = false;   // 鼠标当前是否压在角色身上
+  let overUi = false;    // 鼠标当前是否压在界面控件上（退出按钮等）
   let dragging = false;
   let lastSent = null;   // 上一次下发的穿透状态，避免重复 IPC
   let lastHitAt = 0;
   let lastCell = '';     // 鼠标所在的粗网格，没换格子就不重复读像素
+  let dragMoves = 0;     // 本次拖拽收到的 mousemove 次数（探针用）
+  let dragStartAt = 0;
 
   // 读画布上某个 CSS 坐标处的 alpha 值
   function alphaAt(cssX, cssY) {
@@ -348,39 +397,95 @@ function setupInteractions(app, model) {
     const now = performance.now();
     if (now - lastHitAt < HIT_THROTTLE_MS) return;
 
-    // 鼠标没换格子就不重复读像素（读像素会强制 GPU 同步，能省则省）
+    // 鼠标没换格子就不重复判定（读像素会强制 GPU 同步，能省则省）
     const cell = `${Math.floor(e.clientX / 8)},${Math.floor(e.clientY / 8)}`;
     if (cell === lastCell) return;
     lastCell = cell;
     lastHitAt = now;
 
-    const a = alphaAt(e.clientX, e.clientY);
-    // 迟滞：进要够实，出要够空，中间地带维持原状
-    let hit = overPet;
-    if (!overPet && a > ALPHA_ENTER) hit = true;
-    else if (overPet && a < ALPHA_LEAVE) hit = false;
+    // ★ 先看鼠标是不是压在界面控件上（退出按钮等）。
+    // 控件是 DOM 元素、不在 WebGL 画布上 —— 下面那个读像素的判定对它们永远是「空白」。
+    // 不先判这一条，窗口会继续保持穿透，按钮就永远点不到（这是最容易漏的坑）。
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const ui = !!(el && el.closest('[data-ui]'));
 
-    if (hit === overPet) return;
+    let hit = overPet;
+    if (ui) {
+      hit = true; // 压在控件上：无条件接住鼠标
+    } else {
+      const a = alphaAt(e.clientX, e.clientY);
+      // 迟滞：进要够实，出要够空，中间地带维持原状
+      if (!overPet && a > ALPHA_ENTER) hit = true;
+      else if (overPet && a < ALPHA_LEAVE) hit = false;
+    }
+
+    if (hit === overPet && ui === overUi) return;
     overPet = hit;
-    document.body.style.cursor = hit ? 'grab' : 'default';
+    overUi = ui;
+    document.body.style.cursor = ui ? 'pointer' : (hit ? 'grab' : 'default');
     setThrough(!hit);
   }
 
   window.addEventListener('mousemove', (e) => {
     if (dragging) {
+      dragMoves++;
       if (window.petAPI) window.petAPI.dragMove({ x: e.screenX, y: e.screenY });
       return;
     }
     refreshHit(e);
   });
 
+  // 拖拽期间关掉「视线跟随」。
+  //
+  // 为什么必须关：pixi-live2d-display 的 onPointerMove 会把「鼠标在画布里的位置」
+  // 直接喂给 model.focus()，角色的头/眼睛就跟着转（平时这是招牌动作）。
+  // 但拖拽时是灾难 —— 鼠标在屏幕上几乎不动，窗口却在追着鼠标跑，
+  // 于是鼠标在画布里的相对位置一直在抖，focus 目标跟着抖，**角色的头就一抽一抽的**。
+  // 拖拽时用户的意图是「把宠物挪个地方」，不是「指着宠物看」，所以这里直接停掉。
+  //
+  // ⚠ 坑：不能只写 model.autoInteract = false。
+  //   库里那个 setter 只管 pointertap（点击）监听，视线跟随是挂在
+  //   _render() 里每帧调用的 registerInteraction() 上的（index.es.js:1305）。
+  //   所以必须「先设标志、再手动 unregisterInteraction()」——
+  //   顺序反了的话，下一帧 _render 又会把监听挂回来，等于白做。
+  //   恢复时只要把 autoInteract 设回 true，下一帧 _render 会自动挂回去。
+  function setGazeFollowing(on) {
+    if (!model) return;
+    try {
+      model.autoInteract = on;
+      if (!on) model.unregisterInteraction();
+    } catch { /* 库内部结构变了，也不能让拖拽崩掉 */ }
+  }
+
+  // 拖拽结束后打一行统计 —— 这是「拖动卡顿」的客观证据。
+  // 「mousemove 次数」很关键：现在每收到一次就请主进程搬一次窗口，
+  // 所以这个数字 ≈ 这次拖拽让窗口动了多少次。数字越大越费。
+  function reportDragStats(moved) {
+    const ms = performance.now() - dragStartAt;
+    const st = frameGapStats();
+    const perSec = ms > 0 ? Math.round((dragMoves / ms) * 1000) : 0;
+    if (!st) return log(`拖拽结束：位移 ${moved}px · 没采到帧数据`);
+    log(
+      `拖拽统计：mousemove ${dragMoves} 次 / ${Math.round(ms)}ms（≈${perSec} 次/秒，每次都会搬一次窗口）· ` +
+      `帧间隔 中位 ${st.med.toFixed(1)}ms 最大 ${st.max.toFixed(1)}ms · 掉帧(>50ms) ${st.over50}/${st.n} · 位移 ${moved}px`
+    );
+  }
+
   let downAt = null;
 
   window.addEventListener('mousedown', (e) => {
-    if (e.button !== 0 || !overPet) return;
+    // 压在界面控件上（退出按钮等）不进入拖拽 —— 否则点按钮会变成拖窗口
+    if (e.button !== 0 || !overPet || overUi) return;
     dragging = true;
     downAt = { x: e.screenX, y: e.screenY };
     lastCell = '';
+    // 开始采集帧间隔
+    dragMoves = 0;
+    dragStartAt = performance.now();
+    frameGap.samples = [];
+    frameGap.on = true;
+    // 拖拽期间别让角色的头跟着鼠标抖
+    setGazeFollowing(false);
     document.body.style.cursor = 'grabbing';
     setThrough(false);
     if (window.petAPI) window.petAPI.dragStart({ x: e.screenX, y: e.screenY });
@@ -389,6 +494,9 @@ function setupInteractions(app, model) {
   window.addEventListener('mouseup', (e) => {
     if (!dragging) return;
     dragging = false;
+    frameGap.on = false;
+    // 松手，视线跟随恢复（下一帧库会自动挂回去）
+    setGazeFollowing(true);
     document.body.style.cursor = overPet ? 'grab' : 'default';
     if (window.petAPI) window.petAPI.dragEnd();
 
@@ -396,6 +504,8 @@ function setupInteractions(app, model) {
     const moved = downAt ? Math.abs(e.screenX - downAt.x) + Math.abs(e.screenY - downAt.y) : 999;
     downAt = null;
     if (moved <= 6) reactToClick(model);
+
+    reportDragStats(moved);
 
     // 松手后重新判一次，决定要不要恢复穿透
     lastCell = '';
@@ -406,7 +516,7 @@ function setupInteractions(app, model) {
   // 右键：弹出和托盘一样的菜单
   window.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (!overPet || !window.petAPI) return;
+    if (!overPet || overUi || !window.petAPI) return;
     window.petAPI.showMenu();
   });
 
@@ -429,6 +539,9 @@ function setupInteractions(app, model) {
   }, 800);
 
   log('交互已就绪（穿透 / 拖拽 / 点击换表情 / 右键菜单）');
+
+  // 给自检用：看当前穿透判定状态（through = true 表示鼠标穿过去点桌面了）
+  return { getHitState: () => ({ overPet, overUi, through: lastSent }) };
 }
 
 function reactToClick(model) {

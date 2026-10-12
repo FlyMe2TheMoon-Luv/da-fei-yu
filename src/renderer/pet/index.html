@@ -40,11 +40,41 @@
     }
     #hint.gone { opacity: 0; }
     #hint.error { color: #b91c1c; }
+
+    /* 退出按钮。
+       ⚠ 它不在 WebGL 画布上，所以鼠标穿透的「读像素」判定看不见它。
+       必须靠 renderer.js 里 elementFromPoint 那条兜底逻辑，否则这个按钮点不到。
+       data-ui 就是给那条逻辑认领用的标记（以后加设置按钮也挂这个属性）。 */
+    #btn-exit {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, .78);
+      color: #6b7280;
+      font-size: 13px;
+      line-height: 26px;
+      text-align: center;
+      cursor: pointer;
+      opacity: .38;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
+      transition: opacity .18s, background .18s, color .18s;
+    }
+    #btn-exit:hover {
+      opacity: 1;
+      background: #ef4444;
+      color: #fff;
+    }
   </style>
 </head>
 <body>
   <div id="stage"></div>
   <div id="hint">加载中…</div>
+  <button id="btn-exit" data-ui="1" title="退出桌宠" aria-label="退出桌宠">✕</button>
 
   <!-- 顺序不能变：PIXI → Cubism Core → pixi-live2d-display -->
   <script src="./vendor/pixi.min.js"></script>

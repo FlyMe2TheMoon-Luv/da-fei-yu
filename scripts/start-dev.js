@@ -16,27 +16,53 @@
 //   npm start                 正常启动
 //   npm start -- --no-gpu     无 GPU 环境启动
 //   npm start -- <其他参数>    额外参数原样透传给 electron
+//
+// 开发自检（两个便利参数，由本脚本翻译成环境变量 / 启动参数）：
+//   npm start -- --no-gpu --selftest=gaze   拖拽时「视线跟随」开关自检
+//   npm start -- --no-gpu --selftest=drag   拖拽性能自检（搬窗口频率 / 帧间隔）
+//   npm start -- --no-gpu --selftest=1      原有的穿透 + 表情自检
+//   --isolated  用独立的临时 user-data-dir
+//               —— 桌宠是单实例程序，已经开着一个时，再启动会被直接顶掉，
+//                  自检根本不会跑（很容易误判成「通过」），所以跑自检务必加上它。
 
 const { spawn } = require('child_process');
+const os = require('os');
+const path = require('path');
 
 // 在普通 Node 下 require('electron') 拿到的是 electron 可执行文件的绝对路径
 const electronBin = require('electron');
 
 const passthrough = process.argv.slice(2);
 const extra = [];
+const rest = [];
+let selftest = null;
+let isolated = false;
 
-if (passthrough.includes('--no-gpu')) {
-  // 注意：这里**不能**用 --disable-software-rasterizer。
-  // 它会把软件光栅化也一起关掉，于是在没有独显的环境里 WebGL 直接不可用，
-  // 桌宠会白屏并报 "WebGL unsupported"。
-  // 正确组合是：禁用硬件 GPU + 允许 SwiftShader 软件渲染兜底。
-  extra.push('--disable-gpu', '--enable-unsafe-swiftshader', '--no-sandbox');
+for (const arg of passthrough) {
+  if (arg === '--no-gpu') {
+    // 注意：这里**不能**用 --disable-software-rasterizer。
+    // 它会把软件光栅化也一起关掉，于是在没有独显的环境里 WebGL 直接不可用，
+    // 桌宠会白屏并报 "WebGL unsupported"。
+    // 正确组合是：禁用硬件 GPU + 允许 SwiftShader 软件渲染兜底。
+    extra.push('--disable-gpu', '--enable-unsafe-swiftshader', '--no-sandbox');
+  } else if (arg.startsWith('--selftest=')) {
+    selftest = arg.slice('--selftest='.length);
+  } else if (arg === '--isolated') {
+    isolated = true;
+  } else {
+    rest.push(arg);
+  }
 }
 
-const args = ['.', ...extra, ...passthrough.filter((a) => a !== '--no-gpu')];
+if (isolated) {
+  rest.push(`--user-data-dir=${path.join(os.tmpdir(), 'desktop-pet-selftest')}`);
+}
+
+const args = ['.', ...extra, ...rest];
 
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE; // 关键：解除「退化成 Node」的开关
+if (selftest) env.PET_SELFTEST = selftest;
 
 const child = spawn(electronBin, args, { stdio: 'inherit', env });
 child.on('close', (code) => process.exit(code == null ? 0 : code));
