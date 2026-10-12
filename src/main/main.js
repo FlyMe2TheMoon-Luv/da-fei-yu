@@ -733,6 +733,13 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   quitting = true;
+  log('收到退出指令，正在退出');
   scheduler.stop();
   savePosition();
+});
+
+// 诊断：子进程（GPU / 网络 / 渲染）意外退出时报一条。
+// 起因：无 GPU 沙箱里桌宠跑几分钟会突然整个消失，只有这一行线索能查。
+app.on('child-process-gone', (_e, details) => {
+  console.error(`[main] ⚠ 子进程退出：${details.type} · 原因 ${details.reason} · 退出码 ${details.exitCode}`);
 });

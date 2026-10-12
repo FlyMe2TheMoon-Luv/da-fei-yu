@@ -44,7 +44,15 @@ for (const arg of passthrough) {
     // 它会把软件光栅化也一起关掉，于是在没有独显的环境里 WebGL 直接不可用，
     // 桌宠会白屏并报 "WebGL unsupported"。
     // 正确组合是：禁用硬件 GPU + 允许 SwiftShader 软件渲染兜底。
-    extra.push('--disable-gpu', '--enable-unsafe-swiftshader', '--no-sandbox');
+    // 再加 --disable-gpu-process-crash-limit：
+    //   SwiftShader 在软件渲染下偶尔会把 GPU 子进程搞崩，默认策略是
+    //   「崩几次就整个浏览器自杀」。加上这条它会一直重启子进程，桌宠不会整个消失。
+    extra.push(
+      '--disable-gpu',
+      '--enable-unsafe-swiftshader',
+      '--no-sandbox',
+      '--disable-gpu-process-crash-limit'
+    );
   } else if (arg.startsWith('--selftest=')) {
     selftest = arg.slice('--selftest='.length);
   } else if (arg === '--isolated') {
