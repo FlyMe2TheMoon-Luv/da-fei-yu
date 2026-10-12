@@ -307,4 +307,49 @@ npm run build             # 打包（electron-builder，阶段 5 才用）
 
 ---
 
+## 十二、Live2D 调研（2026-10-12，主人要求做 L2D 效果）
+
+### 结论：有现成的、可直接用的真 Live2D 大肥鱼模型 ✅
+
+| 来源 | 是什么 | 授权 |
+|---|---|---|
+| **`Andersen216/dsh-whale-girl-live2d`** ⭐ | **真 Live2D 模型**（Cubism 3/4） | 代码 **MIT** / 素材 **CC BY-NC-SA 4.0** |
+| `Pal-AI-Lab/Coopanion` | **自研渲染器**（非 Live2D；分层 PNG + WebGL 网格变形） | 项目 **AGPL-3.0** |
+
+### Andersen216 的模型细节（已实测）
+
+- `c_0120.moc3` —— **2.1 MB**（模型本体）
+- `c_0120.2048/texture_00.png` + `texture_01.png` —— 2 张 2048 贴图
+- `c_0120.physics3.json`（38 KB 物理）、`c_0120.cdi3.json`（28 KB）
+- `expressions/` —— **40+ 个表情**（爱心眼、星星眼、生气、哭、晕晕、吐舌、墨镜、兔兔贴纸…）
+- `motions/` —— 待机、自拍、吹泡泡、开盖、番茄酱等
+- `model3.json` 的 `"Version": 3` → **Cubism 3/4 格式**
+
+### 兼容性结论（关键）
+
+| 项 | 结论 |
+|---|---|
+| 渲染方案 | `pixi-live2d-display` + PIXI + Live2D Cubism Core |
+| ⚠️ **版本坑** | `pixi-live2d-display` 最新版仍是 **0.4.0**，**只兼容 PIXI 6.x**；PIXI 最新是 **8.22.0**，**不能用**。必须锁 `pixi.js@6.5.10`（Andersen216 正是这么锁的） |
+| Electron | ✅ 可行，有多个现成项目验证（`One1turn/Live2D-DesktopPet`；Andersen216 的 Windows 客户端也是 Electron） |
+| Cubism Core | 属 Live2D「可再分发代码」，**允许随应用分发** |
+| Live2D SDK 发行许可 | 开发阶段无需许可；正式发布需签出版许可协议，但**个人 / 小规模发行商可豁免** |
+| 已知风险 | ① Electron **透明窗口 + WebGL** 在部分显卡上会有黑边 / 不透明问题 ② L2D 每帧跑物理 + 变形，**常驻耗电**（Andersen216 专门做了"低性能模式"） ③ 模型 + 贴图约 5-8 MB，打包体积增大 ④ 点击穿透只能按窗口矩形近似，**做不到按模型轮廓穿透** |
+
+### 三条可选路线（待主人决定）
+
+1. **A. 用现成真 Live2D** —— 效果最好；代价是引入 Live2D 授权层 + 性能开销 + 透明窗口风险
+2. **B. 自研分层渲染**（参考 Coopanion 思路）—— 绕开 Live2D 授权，但要自己写渲染器；注意 **AGPL 不能直接抄代码**
+3. **C. 三视图 + 局部图层**（把眼睛 / 嘴单独抠出来做眨眼张嘴）—— 工作量小，效果介于 CSS 与 L2D 之间
+
+> **未决定前不要动 `src/assets/pet/` 里的三视图素材。**
+
+### 授权文件已同步更新
+
+- `CREDITS.md` 新增：**氵六青**（第三位权利人，署名不能漏）+ Live2D 模型候选素材条目
+- `LICENSE-ASSETS.md` 新增第四节：**Live2D 的额外运行时授权层**（Cubism Core / PIXI / pixi-live2d-display + SDK 发行许可）
+- 参考范例：Andersen216 的 `NOTICE.md` 是「许可分层」的教科书写法——代码 MIT / 素材 CC / 第三方运行时各算各的
+
+---
+
 _主人 sync 新细节时，记得回来更新这份文件。_

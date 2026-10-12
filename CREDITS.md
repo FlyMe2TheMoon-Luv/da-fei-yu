@@ -27,13 +27,27 @@
 | 协议 | CC BY-NC-SA 4.0 |
 | 改动说明 | 在「溟月」基础上加入 DeepSeek 元素，更换为深蓝白色长裙式女仆装 |
 
-### 3. 三视图素材
+### 3. 三视图素材（当前使用）
 
 | 项目 | 内容 |
 |---|---|
 | 来源 | GitHub 仓库 [1190fasheqi/dafeiyu-pet](https://github.com/1190fasheqi/dafeiyu-pet) 的 `sprites/` 目录 |
 | 内容 | 正面 / 侧面 / 背面 三视图，已抠为透明底 |
 | 协议 | CC BY-NC-SA 4.0 |
+
+### 4. Live2D 模型（候选素材，尚未采用）
+
+| 项目 | 内容 |
+|---|---|
+| 来源 | GitHub 仓库 [Andersen216/dsh-whale-girl-live2d](https://github.com/Andersen216/dsh-whale-girl-live2d) 的 `assets/model/` |
+| 内容 | `c_0120.moc3`（Cubism 3/4 格式，2.1 MB）+ 2 张 2048 贴图 + 物理文件 + 40 多个表情 + 多组动作 |
+| **版权** | **上善无形 / ZipZipPipe / 氵六青** 三位所有 |
+| 协议 | CC BY-NC-SA 4.0 |
+| 说明 | 该仓库用 `NOTICE.md` 做「许可分层」（代码 MIT / 素材 CC / 第三方运行时各算各的），**本项目的授权文件结构参考了它** |
+| 备注 | **氵六青** 是这条链上的第三位权利人，署名时**不能漏** |
+
+> ⚠️ 若最终采用 Live2D 模型，署名必须写成：
+> **上善无形 / ZipZipPipe / 氵六青**（三位并列），协议 CC BY-NC-SA 4.0。
 
 ---
 
