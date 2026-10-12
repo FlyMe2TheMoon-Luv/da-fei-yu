@@ -32,6 +32,7 @@
   `make-launcher`（生成桌面双击快捷方式 + 图标）/
   `test:schedules`（46）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
   `test:exit`（6）/ `test:gaze`（6）/ `test:drag` / `test:focus`（20）/ `test:quit`（8）/
+  `test:sync`（10，按钮与桌宠同步）/
   `test:reminder-e2e`（19）/ `test:scheduler-e2e` / `test:settings-e2e`（45）。
 - 阶段 2 已拍板：**提醒气泡用独立小窗口**（贴宠物旁，可放按钮）；**错过 5 分钟内补、超过不补**。
 - **界面控件约定**：往桌宠界面加任何 DOM 控件（按钮等）**必须挂 `data-ui` 属性**，
@@ -49,6 +50,18 @@
 - **带标题栏的窗口在 1.5 倍缩放下「外框尺寸会自己飘」**：`new BrowserWindow(480×640)` →
   `getBounds()` 报 481×641；一次 `setPosition()` 后变 482×642；`setAlwaysOnTop()` 还会顺带挪位置。
   所以要用**固定标称尺寸**算位置，再用 `setBounds()` 把位置和尺寸一起写回去。
+- **桌宠窗口（无边框 + useContentSize）更严重：`setPosition()` 会让它越调越大**
+  （拖 40 步 404×384 → 443×424，一路累积不饱和）。所以移动桌宠**一律用 `movePet()`**
+  （内部 `setBounds` 连尺寸一起写回，尺寸用启动时记的 `petSize`，别 `getSize()` 现读）。
+  另外窗口外框尺寸**跟位置有关**（1259,639 → 404×384；1087,618 → 404×382，DPI 取整）。
+- **界面控件（按钮等）必须放在 `#ui` 容器里、由 `syncUiBox()` 对齐到画布**，
+  不能贴窗口边定位 —— 否则窗口尺寸一变控件就跟角色错位（主人报过这个 bug）。
+  回归哨兵：`npm run test:sync`。
+- **写自检别量「相对量」**：`test:sync` 第一版量「按钮中心离窗口右边界的距离」，
+  因为按钮是 `right:46px` 定位的，这个值恒等于常数，负对照永远不失败。
+  必须量绝对坐标。这是「验证方式本身也可能是假的」的又一例。
+- **`--isolated` 的临时目录每次必须清空**（start-dev.js 已做）：自检会拖动桌宠并存位置，
+  复用旧目录会让下次自检停在上次遗留的位置上，结果不可复现。
 - 硬性约定：
   - renderer 一律通过 IPC 找 main，不开 nodeIntegration，保持 contextIsolation。
   - 日程调度用轮询不用 setTimeout。
