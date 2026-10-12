@@ -1392,12 +1392,39 @@ async function runSettingsSelfTest() {
 
 // ---------- 生命周期 ----------
 
+// 桌面上的「停止桌宠」快捷方式就是再启动一次自己、带上这个参数：
+// 已经开着的那个实例会在 second-instance 里收到它，然后优雅退出。
+//
+// 为什么不直接在快捷方式里写 taskkill：
+//   1. taskkill /IM electron.exe 会把机器上**所有** electron 程序一起杀掉
+//      （以后装了别的基于 Electron 的软件就会误伤）；
+//   2. 强杀不给程序收尾的机会（HANDOFF 硬性约定：专注模式改过 hosts 要能还原）；
+//   3. 走「第二实例通知第一实例」这条路，退出流程和点托盘菜单里的「退出」完全一样。
+//
+// 参数名特意起得跟 Chromium 自带开关不冲突，免得被浏览器层吃掉。
+const QUIT_FLAG = '--pet-quit';
+
 // 托盘软件的标准做法：只允许开一个实例，重复启动就把已有窗口唤出来
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
+  // 已经有实例在跑。我们要么是「再点了一次启动」（对方会把它唤出来），
+  // 要么是「点了停止桌宠」（对方会退出）——不管哪种，自己都不该继续待着。
+  app.quit();
+} else if (process.argv.includes(QUIT_FLAG)) {
+  // 拿到了锁说明本来就没在跑，而主人点的是「停止桌宠」——没东西可停，安静退出。
+  // 注意要在 createWindow() 之前判断，否则会先闪一下窗口再消失。
+  log('收到「停止桌宠」，但桌宠本来就没在运行，直接退出');
   app.quit();
 } else {
-  app.on('second-instance', showPet);
+  app.on('second-instance', (_event, argv) => {
+    if (argv.includes(QUIT_FLAG)) {
+      log('收到「停止桌宠」指令，优雅退出');
+      app.quit();
+      return;
+    }
+    // 普通重复启动：把已有窗口唤出来
+    showPet();
+  });
 
   app.whenReady().then(() => {
     createWindow();
