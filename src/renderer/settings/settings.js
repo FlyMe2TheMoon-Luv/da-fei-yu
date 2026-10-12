@@ -15,6 +15,9 @@ const el = {
   formTitle: document.getElementById('form-title'),
   title: document.getElementById('f-title'),
   time: document.getElementById('f-time'),
+  kind: document.getElementById('f-kind'),
+  endTime: document.getElementById('f-endtime'),
+  rowEndTime: document.getElementById('row-endtime'),
   repeat: document.getElementById('f-repeat'),
   date: document.getElementById('f-date'),
   rowDate: document.getElementById('row-date'),
@@ -77,6 +80,13 @@ function hideFormError() {
 
 // ---------- 列表渲染 ----------
 
+// 列表上那一栏时间：时间点就是「09:30」，时段显示成「09:30–11:00」。
+// ⚠ 主进程算周视图时要复述同一份文案（settings-window.js 里的 repeatText），
+//   两边暂时各有一份 —— 改这里记得顺手看一眼那边。
+function timeText(it) {
+  return it.kind === 'span' && it.endTime ? `${it.time}–${it.endTime}` : it.time;
+}
+
 function repeatText(it) {
   if (it.repeat === 'once') return `只一次 · ${it.date}`;
   if (it.repeat === 'weekly') {
@@ -101,7 +111,7 @@ function buildItem(it) {
   main.className = 'main';
   const time = document.createElement('span');
   time.className = 'time';
-  time.textContent = it.time;
+  time.textContent = timeText(it);
   const title = document.createElement('span');
   title.className = 'title';
   title.textContent = it.title; // 用 textContent 而不是 innerHTML：标题是主人自己输的，别当代码解析
@@ -185,6 +195,12 @@ function syncRepeatRows() {
   el.rowWeekdays.classList.toggle('hidden', r !== 'weekly');
 }
 
+// 选了「时段」才需要填「到几点」；「时间点」把它藏起来。
+// 绑定方式和 syncRepeatRows 完全一样（都是 change 事件）。
+function syncKindRows() {
+  el.rowEndTime.classList.toggle('hidden', el.kind.value !== 'span');
+}
+
 function openForm(it) {
   resetPendingDelete();
   editingId = it ? it.id : null;
@@ -192,6 +208,9 @@ function openForm(it) {
   el.formTitle.textContent = it ? '修改日程' : '添加日程';
   el.title.value = it ? it.title : '';
   el.time.value = it ? it.time : '09:00';
+  // 新增时默认「时间点」：大多数日程就是到点提醒一下
+  el.kind.value = it && it.kind ? it.kind : 'point';
+  el.endTime.value = it && it.endTime ? it.endTime : '11:00';
   // 新增时默认「每天」：不用挑日期，对第一次用的人最省事
   el.repeat.value = it ? it.repeat : 'daily';
   el.date.value = it && it.date ? it.date : todayKey();
@@ -202,6 +221,7 @@ function openForm(it) {
   }
 
   syncRepeatRows();
+  syncKindRows();
   hideFormError();
   el.form.classList.remove('hidden');
   el.title.focus();
@@ -217,8 +237,11 @@ async function onSave() {
   const input = {
     title: el.title.value.trim(),
     time: el.time.value,
+    kind: el.kind.value,
     repeat: el.repeat.value,
   };
+  // 时间点不带「结束时间」；主进程也会把多余的 endTime 清成 null
+  if (input.kind === 'span') input.endTime = el.endTime.value;
   if (input.repeat === 'once') input.date = el.date.value;
   if (input.repeat === 'weekly') {
     input.weekdays = [...el.wdList.querySelectorAll('input:checked')].map((cb) => Number(cb.value));
@@ -227,6 +250,8 @@ async function onSave() {
   // 轻量提示：只挡「明显没填完」的，规则细节交给主进程
   if (!input.title) return showFormError('还没写「做什么」呢');
   if (!input.time) return showFormError('还没选「几点」');
+  // ⚠ 「结束必须晚于开始」这条**不在界面判**，交给主进程 —— 免得两套规则不一致。
+  if (input.kind === 'span' && !input.endTime) return showFormError('选了「时段」，得填到几点');
   if (input.repeat === 'once' && !input.date) return showFormError('选了「只提醒一次」，得挑个日期');
   if (input.repeat === 'weekly' && !input.weekdays.length) return showFormError('选了「每周」，得勾上星期几');
 
@@ -255,6 +280,7 @@ el.btnAdd.addEventListener('click', () => openForm(null));
 el.btnCancel.addEventListener('click', closeForm);
 el.btnSave.addEventListener('click', onSave);
 el.repeat.addEventListener('change', syncRepeatRows);
+el.kind.addEventListener('change', syncKindRows);
 
 el.btnPreview.addEventListener('click', async () => {
   const res = await api.preview();

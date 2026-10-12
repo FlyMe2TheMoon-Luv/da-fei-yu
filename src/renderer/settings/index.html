@@ -307,6 +307,20 @@
       <input id="f-time" type="time" value="09:00" />
     </div>
 
+    <!-- v2：日程分两种 —— 时间点（到点响一下）/ 时段（占一段时间） -->
+    <div class="field">
+      <span>类型</span>
+      <select id="f-kind">
+        <option value="point">时间点（到点提醒一下）</option>
+        <option value="span">时段（占一段时间）</option>
+      </select>
+    </div>
+
+    <div class="field hidden" id="row-endtime">
+      <span>到几点</span>
+      <input id="f-endtime" type="time" value="11:00" />
+    </div>
+
     <div class="field">
       <span>重复</span>
       <select id="f-repeat">

@@ -1497,6 +1497,134 @@ async function runSettingsSelfTest() {
   ok(added.emptyHidden === true, '有日程之后，「还没有日程」的提示自动藏起来');
   const testId = inFile.length ? inFile[0].id : null;
 
+  // ===== ⑤b 时段日程：界面上填得出、存得进、列表显示成「开始–结束」=====
+  // 「时段」是 v2 的新东西：一条日程占一段时间，不是到点响一下就走。
+  log('⑤b 时段日程（14:00–16:30）');
+  const spanAdd = await sw.webContents.executeJavaScript(`(async () => {
+    const kindSel = document.getElementById('f-kind');
+    if (!kindSel) return { missingKind: true };
+
+    document.getElementById('btn-add').click();
+    document.getElementById('f-title').value = '自检·时段';
+    kindSel.value = 'span';
+    kindSel.dispatchEvent(new Event('change'));
+    const endVisible = !document.getElementById('row-endtime').classList.contains('hidden');
+    document.getElementById('f-time').value = '14:00';
+    document.getElementById('f-endtime').value = '16:30';
+    const rep = document.getElementById('f-repeat');
+    rep.value = 'daily';
+    rep.dispatchEvent(new Event('change'));
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 400));
+
+    const li = [...document.querySelectorAll('#list .item')]
+      .find((x) => x.querySelector('.title').textContent === '自检·时段') || null;
+    return {
+      endVisible,
+      time: li ? li.querySelector('.time').textContent : null,
+      formClosed: document.getElementById('form').classList.contains('hidden'),
+    };
+  })()`);
+
+  if (spanAdd.missingKind) {
+    ok(false, '★ 表单里没有「类型」这一栏（#f-kind）—— 时段根本填不出来');
+  } else {
+    ok(spanAdd.endVisible === true, '选了「时段」，「到几点」那一行冒出来了');
+    ok(spanAdd.time === '14:00–16:30', '★ 列表上显示成「开始–结束」', ` → “${spanAdd.time}”`);
+    ok(spanAdd.formClosed === true, '保存后表单自动收起');
+  }
+  const spanInFile = schedules.list().filter((x) => x.title === '自检·时段');
+  ok(spanInFile.length === 1, '★ 主进程那边确实存进了文件', ` → 文件里 ${spanInFile.length} 条`);
+  // ★ 只看界面不算数 —— 界面假装显示对了也能骗过测试，所以必须问主进程
+  ok(!!(spanInFile[0] && spanInFile[0].kind === 'span'), '★ 主进程读到 kind = span（不是只有界面显示对）',
+    ` → kind=${spanInFile[0] && spanInFile[0].kind}`);
+  ok(!!(spanInFile[0] && spanInFile[0].endTime === '16:30'), '★ 主进程读到 endTime = 16:30',
+    ` → endTime=${spanInFile[0] && spanInFile[0].endTime}`);
+
+  // ★ 负对照：类型切回「时间点」，「到几点」必须藏起来，存出来的 endTime 必须是 null。
+  //   ⚠ 故意另建一条「自检·试类型」来验，**不动**上面那条「自检·时段」——
+  //     后面 ⑤d（周视图）还要拿它当「时段比时间点高」的证据。
+  log('⑤b′ ★ 负对照：类型切回「时间点」→ 结束时间那一行消失、endTime 存成 null');
+  const pointSwitch = await sw.webContents.executeJavaScript(`(async () => {
+    const kindSel = document.getElementById('f-kind');
+    if (!kindSel) return { missingKind: true };
+
+    document.getElementById('btn-add').click();
+    document.getElementById('f-title').value = '自检·试类型';
+    kindSel.value = 'span';
+    kindSel.dispatchEvent(new Event('change'));
+    document.getElementById('f-time').value = '10:00';
+    document.getElementById('f-endtime').value = '11:00';
+    const rep = document.getElementById('f-repeat');
+    rep.value = 'daily';
+    rep.dispatchEvent(new Event('change'));
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 400));
+
+    // 再打开它，把类型切回「时间点」
+    const li = [...document.querySelectorAll('#list .item')]
+      .find((x) => x.querySelector('.title').textContent === '自检·试类型');
+    if (!li) return { missingRow: true };
+    li.querySelector('.actions .ghost').click();
+    await new Promise((r) => setTimeout(r, 150));
+    const endVisibleBefore = !document.getElementById('row-endtime').classList.contains('hidden');
+    kindSel.value = 'point';
+    kindSel.dispatchEvent(new Event('change'));
+    const endVisibleAfter = !document.getElementById('row-endtime').classList.contains('hidden');
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 400));
+    return { endVisibleBefore, endVisibleAfter };
+  })()`);
+
+  if (pointSwitch.missingKind || pointSwitch.missingRow) {
+    ok(false, '★ 负对照没法做（找不到「类型」栏或那一行）');
+  } else {
+    ok(pointSwitch.endVisibleBefore === true, '改一条时段日程时，「到几点」一开始是显示着的');
+    ok(pointSwitch.endVisibleAfter === false, '★ 负对照：类型切成「时间点」后，「到几点」藏起来了');
+  }
+  const switchedToPoint = schedules.list().filter((x) => x.title === '自检·试类型');
+  ok(!!(switchedToPoint[0] && switchedToPoint[0].kind === 'point' && switchedToPoint[0].endTime === null),
+    '★ 负对照：切回时间点后存出来的 endTime 是 null（没留脏数据）',
+    ` → kind=${switchedToPoint[0] && switchedToPoint[0].kind} endTime=${switchedToPoint[0] && switchedToPoint[0].endTime}`);
+
+  // ===== ⑤c ★ 负对照：结束时间早于开始 → 必须被拦下，且不能写进文件 =====
+  log('⑤c ★ 负对照：结束时间早于开始时间（15:00→14:00）→ 拦下');
+  const countBeforeC = schedules.list().length;
+  const backwards = await sw.webContents.executeJavaScript(`(async () => {
+    const kindSel = document.getElementById('f-kind');
+    if (!kindSel) return { missingKind: true };
+
+    document.getElementById('btn-add').click();
+    document.getElementById('f-title').value = '自检·倒流';
+    kindSel.value = 'span';
+    kindSel.dispatchEvent(new Event('change'));
+    document.getElementById('f-time').value = '15:00';
+    document.getElementById('f-endtime').value = '14:00';
+    const rep = document.getElementById('f-repeat');
+    rep.value = 'daily';
+    rep.dispatchEvent(new Event('change'));
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 400));
+    const err = document.getElementById('form-error');
+    const out = {
+      formStillOpen: !document.getElementById('form').classList.contains('hidden'),
+      errorShown: !err.classList.contains('hidden'),
+      errorText: err.textContent,
+    };
+    document.getElementById('btn-cancel').click();   // 收尾：别让表单一直开着影响后面几步
+    return out;
+  })()`);
+
+  if (backwards.missingKind) {
+    ok(false, '★ 负对照没法做（找不到「类型」栏）');
+  } else {
+    ok(backwards.errorShown === true, '界面上给出了错误提示', ` → “${backwards.errorText}”`);
+    ok(backwards.formStillOpen === true, '表单没被关掉（主人填的东西还在，不用重填）');
+  }
+  ok(schedules.list().length === countBeforeC, '★ 主进程那边一条都没多',
+    ` → 还是 ${countBeforeC} 条`);
+  ok(schedules.list().every((x) => x.title !== '自检·倒流'), '★ 「自检·倒流」确实没被写进文件');
+
   // ===== ⑥ 开关：临时关掉 / 打开 =====
   log('⑥ 开关（临时关掉，不删除）');
   if (testId) {
