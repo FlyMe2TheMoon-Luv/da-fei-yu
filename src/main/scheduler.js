@@ -31,6 +31,9 @@ let onDue = null; // 命中时的回调：(item, 目标时刻Date) => void
 
 // 这条日程「今天」该在几点响？不该响就返回 null。
 // 只看日期规则，不管有没有已经响过（那是 dueItems 的事）。
+//
+// ⚠ 下面的星期判定和 week.js 的 itemsOfDay() 是**同一套规则**（getDay()，0 = 周日）。
+//   改了一边一定要改另一边，否则会出现「周视图上画了、到点却不响」这种极难查的 bug。
 function todayTarget(item, now) {
   if (!item || !item.enabled) return null;
 
