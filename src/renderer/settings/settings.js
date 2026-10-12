@@ -213,6 +213,8 @@ function renderWeek(data) {
       slot.style.height = HOUR_H + 'px';
       slot.dataset.day = d.key;
       slot.dataset.hour = String(h);
+      // 点空白格 → 就在那一格新建一条
+      slot.addEventListener('click', () => openFromBlank(d.key, h));
       col.appendChild(slot);
     }
 
@@ -230,6 +232,9 @@ function renderWeek(data) {
       t.className = 'blk-title';
       t.textContent = b.title; // ★ textContent：标题是主人自己输的，绝不当 HTML 解析
       blk.appendChild(t);
+
+      // 点方块 → 开表单改这一条
+      blk.addEventListener('click', () => openFromWeek(b.id));
 
       col.appendChild(blk);
     }
@@ -268,6 +273,34 @@ async function setMode(next) {
 
 async function toggleMode() {
   await setMode(mode === 'week' ? 'list' : 'week');
+}
+
+// 点周视图上的一个方块 → 开表单改这一条。
+// ⚠ 故意**不**用「点的时候闭包捕获的那份数据」—— 周视图可能是几分钟前渲染的，
+//   中间主人在别处改过。一律按 id 重新去主进程拿最新的。
+async function openFromWeek(id) {
+  const latest = await api.list();
+  const item = (Array.isArray(latest) ? latest : []).find((x) => x.id === id);
+  if (!item) {
+    toast('这条日程已经不在了，我刷新一下');
+    await load();
+    return;
+  }
+  // 表单会被周视图的网格盖住，所以先切回列表再开表单
+  await setMode('list');
+  openForm(item);
+}
+
+// 点周视图的空白格 → 就在那一格新建：标题空着，时间预填那一格，重复默认「只一次」、日期就是那天。
+async function openFromBlank(dayKey, hour) {
+  await setMode('list'); // 同样先切回列表，不然表单被网格盖住
+  openForm(null); // 先把表单恢复成「干净的新建状态」，再覆盖几个字段
+  el.time.value = `${String(hour).padStart(2, '0')}:00`;
+  el.kind.value = 'point';
+  el.repeat.value = 'once';
+  el.date.value = dayKey;
+  syncRepeatRows();
+  syncKindRows();
 }
 
 // ---------- 单个日程的操作 ----------

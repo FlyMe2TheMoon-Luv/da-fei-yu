@@ -1713,6 +1713,134 @@ async function runSettingsSelfTest() {
       ` → 实际 ${b.width}×${b.height}`);
   }
 
+  // ===== ⑤e 在周视图上改：点方块 → 跳回列表并弹出填好的表单 =====
+  log('⑤e 周视图上点方块 → 弹出填好的表单');
+  const clickBlk = await sw.webContents.executeJavaScript(`(async () => {
+    const btn = document.getElementById('btn-week');
+    if (!btn) return { missingBtn: true };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 900));
+
+    const blk = [...document.querySelectorAll('#week-grid .blk')].find((x) => {
+      const t = x.querySelector('.blk-title');
+      return t && t.textContent === '自检·时段';
+    });
+    if (!blk) return { missingBlk: true };
+
+    blk.click(); // 真点一下（不是直接调函数）
+    await new Promise((r) => setTimeout(r, 600));
+
+    const kindSel = document.getElementById('f-kind');
+    return {
+      formOpen: !document.getElementById('form').classList.contains('hidden'),
+      title: document.getElementById('f-title').value,
+      kind: kindSel ? kindSel.value : null,
+      endTime: document.getElementById('f-endtime') ? document.getElementById('f-endtime').value : null,
+      weekHidden: document.getElementById('week').classList.contains('hidden'),
+      listShown: !document.querySelector('.list-wrap').classList.contains('hidden'),
+      btnText: btn.textContent.trim(),
+    };
+  })()`);
+
+  if (clickBlk.missingBtn || clickBlk.missingBlk) {
+    ok(false, '★ 点方块没法测（找不到「周视图」按钮或那一块）');
+  } else {
+    ok(clickBlk.formOpen === true, '★ 点一下方块，表单真的弹出来了');
+    ok(clickBlk.title === '自检·时段', '★ 表单里填的是**这一条**的标题（不是空的、也不是别人的）',
+      ` → “${clickBlk.title}”`);
+    ok(clickBlk.kind === 'span' && clickBlk.endTime === '16:30',
+      '★ 类型和结束时间也都带进来了', ` → kind=${clickBlk.kind} endTime=${clickBlk.endTime}`);
+    ok(clickBlk.weekHidden === true && clickBlk.listShown === true,
+      '★ 同时切回了列表（不然表单会被周视图的网格盖住）');
+    ok(clickBlk.btnText === '周视图', '切回列表后按钮文案也跟着变回「周视图」', ` → “${clickBlk.btnText}”`);
+  }
+
+  // ★ 负对照：在表单里改完保存，主进程那边必须**真的变了** ——
+  //   只验「表单里填对了」不够，那只能证明我们把值读出来了，证明不了写回去。
+  log('⑤e′ ★ 负对照：在表单里改名 + 改结束时间 → 主进程那边真的变了');
+  const editFromWeek = await sw.webContents.executeJavaScript(`(async () => {
+    if (document.getElementById('form').classList.contains('hidden')) return { formWasClosed: true };
+    document.getElementById('f-title').value = '自检·时段改';
+    document.getElementById('f-endtime').value = '17:00';
+    document.getElementById('btn-save').click();
+    await new Promise((r) => setTimeout(r, 500));
+    return { formClosed: document.getElementById('form').classList.contains('hidden') };
+  })()`);
+  const editedItems = schedules.list().filter((x) => x.title === '自检·时段改');
+  ok(editFromWeek.formClosed === true, '保存后表单收起来了');
+  ok(editedItems.length === 1, '★ 负对照：主进程那边的标题真的变成「自检·时段改」了',
+    ` → 找到 ${editedItems.length} 条`);
+  ok(!!(editedItems[0] && editedItems[0].endTime === '17:00'), '★ 负对照：结束时间也真的改成 17:00 了',
+    ` → endTime=${editedItems[0] && editedItems[0].endTime}`);
+  ok(schedules.list().every((x) => x.title !== '自检·时段'),
+    '★ 负对照：老标题已经不存在（说明是「改了这一条」，不是「又加了一条」）');
+
+  // ★ 负对照：点空白格新建 → 表单必须是**空的**，不能把上次点过的日程带进来
+  log('⑤e″ ★ 负对照：点周视图的空白格 → 弹出空白表单，时间预填那一格');
+  {
+    // 本周三的日期键（周一算第一天，所以 +2）
+    const nowD = new Date();
+    const backD = (nowD.getDay() + 6) % 7;
+    const monD = new Date(nowD.getFullYear(), nowD.getMonth(), nowD.getDate() - backD);
+    const wedKey = schedules.localDateKey(
+      new Date(monD.getFullYear(), monD.getMonth(), monD.getDate() + 2)
+    );
+
+    const clickSlot = await sw.webContents.executeJavaScript(`(async () => {
+      const btn = document.getElementById('btn-week');
+      if (!btn) return { missingBtn: true };
+      btn.click();
+      await new Promise((r) => setTimeout(r, 900));
+
+      const cols = [...document.querySelectorAll('#week-grid .day-col')];
+      const wed = cols[2]; // 周一、周二、周三 —— 第 3 列就是周三
+      const slot = wed ? wed.querySelector('.slot[data-hour="13"]') : null;
+      if (!slot) return { missingSlot: true };
+
+      slot.click();
+      await new Promise((r) => setTimeout(r, 600));
+
+      const kindSel = document.getElementById('f-kind');
+      return {
+        formOpen: !document.getElementById('form').classList.contains('hidden'),
+        title: document.getElementById('f-title').value,
+        time: document.getElementById('f-time').value,
+        repeat: document.getElementById('f-repeat').value,
+        date: document.getElementById('f-date').value,
+        kind: kindSel ? kindSel.value : null,
+        weekHidden: document.getElementById('week').classList.contains('hidden'),
+      };
+    })()`);
+
+    if (clickSlot.missingBtn || clickSlot.missingSlot) {
+      ok(false, '★ 点空白格没法测（找不到「周视图」按钮或那一格）');
+    } else {
+      ok(clickSlot.formOpen === true, '点空白格也能弹出表单');
+      ok(clickSlot.title === '', '★ 负对照：标题是**空的**（没把上次点过的日程带进来）',
+        ` → “${clickSlot.title}”`);
+      ok(clickSlot.time === '13:00', '时间预填成点的那一格 13:00', ` → “${clickSlot.time}”`);
+      ok(clickSlot.repeat === 'once' && clickSlot.date === wedKey,
+        '★ 重复默认「只提醒一次」，日期预填成点的那一天（周三）',
+        ` → ${clickSlot.repeat} · ${clickSlot.date}（期望 ${wedKey}）`);
+      ok(clickSlot.kind === 'point', '类型默认「时间点」', ` → ${clickSlot.kind}`);
+      ok(clickSlot.weekHidden === true, '★ 也切回了列表（表单才不会被盖住）');
+      // 收尾：把这张空白表单取消掉，别影响后面几步
+      await sw.webContents.executeJavaScript(`document.getElementById('btn-cancel').click()`);
+      await sleep(200);
+    }
+  }
+
+  // 收尾：把 ⑤e 造出来的那条删掉。
+  // （⑨ 也会清掉所有「自检·」开头的记录，这里顺手清一次，让中间几步看到的列表更干净）
+  for (const it of schedules.list()) {
+    if (it.title === '自检·时段改') schedules.remove(it.id);
+  }
+  // 让界面上的列表跟着刷新（load 是 settings.js 里的全局函数；万一拿不到就跳过，⑨ 还会兜底）
+  await sw.webContents.executeJavaScript(`(async () => {
+    if (typeof load === 'function') await load();
+  })()`);
+  await sleep(200);
+
   // ===== ⑥ 开关：临时关掉 / 打开 =====
   log('⑥ 开关（临时关掉，不删除）');
   if (testId) {
