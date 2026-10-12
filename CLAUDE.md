@@ -13,7 +13,7 @@
 1. **日程提醒** —— 按输入的日程安排到点提醒
 2. **专注模式** —— 在该模式下禁用用户预设的网站或软件
 
-完整方案见 `PLAN.md`；项目状态与决策见 `HANDOFF.md`。
+完整方案见 `PLAN.md`；项目状态与下一步见 `HANDOFF.md`（历史调研归档在 `HANDOFF-ARCHIVE.md`）。
 
 ---
 
@@ -37,7 +37,8 @@
 desktop-pet/
 ├─ package.json
 ├─ CLAUDE.md              ← 本文件，项目说明书
-├─ HANDOFF.md             ← 项目交接文件
+├─ HANDOFF.md             ← 项目交接文件（开工手册，先读这个）
+├─ HANDOFF-ARCHIVE.md     ← 历史归档（调研 / 决策史 / 验收记录）
 ├─ PLAN.md                ← 完整实现方案
 ├─ LICENSE                ← 代码：MIT
 ├─ LICENSE-ASSETS.md      ← 素材：CC BY-NC-SA 4.0

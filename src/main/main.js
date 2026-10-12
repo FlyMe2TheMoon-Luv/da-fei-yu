@@ -280,8 +280,45 @@ function runInputSelfTest() {
     move(4, 4); // 左上角一定是空的
     setTimeout(() => {
       log('自检结束。上面应该看到「穿透 → 关」再「穿透 → 开」两条日志');
+      checkExpressions();
     }, 700);
   }, 700);
+}
+
+// 查表情到底能不能用。
+// 背景：这个模型的 model3.json 原本漏了 Expressions 字段，导致 pixi-live2d-display
+// 一个表情都加载不到，而 model.expression() 不报错、静默什么也不做 —— 特别坑。
+// 已用 scripts/patch-model-expressions.js 补上。这里做回归哨兵。
+async function checkExpressions() {
+  try {
+    const r = await win.webContents.executeJavaScript(`(async () => {
+      const d = window.__petDebug;
+      if (!d) return { error: '渲染进程没暴露 __petDebug' };
+      const em = d.model.internalModel.motionManager.expressionManager;
+      const defs = em ? em.definitions : null;
+      // 注意：库内部读的是 Name（大写），getExpressionIndex 里写死了 e.Name === t
+      const names = defs ? defs.map((x) => x.Name) : [];
+      const out = {
+        managerExists: !!em,
+        count: defs ? defs.length : -1,
+        firstNames: names.slice(0, 5),
+        good: await d.model.expression('爱心眼'),      // 存在的表情
+        bogus: await d.model.expression('这个名字不存在'), // 负对照：必须返回 false
+      };
+      return out;
+    })()`);
+
+    if (r.error) return log('表情自检失败：' + r.error);
+    log(`表情自检：manager ${r.managerExists ? '存在' : '不存在'} · 表情数 ${r.count}`);
+    if (r.firstNames && r.firstNames.length) log(`  前几个: ${r.firstNames.join('、')}`);
+    log(`  调用「爱心眼」→ ${r.good}（应为 true）· 调用不存在的名字 → ${r.bogus}（应为 false）`);
+    if (r.count === 0) log('  ⚠ 一个表情都没加载 —— 跑 node scripts/patch-model-expressions.js 补上');
+    else if (r.good !== true) log('  ⚠ 表情加载了但切不动，要查 getExpressionIndex 的字段名');
+    else if (r.bogus !== false) log('  ⚠ 不存在的表情也返回 true，说明这个自检本身不可靠');
+    else log('  ✓ 表情功能正常（正例通、反例被拒，检测可信）');
+  } catch (err) {
+    log('表情自检失败：' + err.message);
+  }
 }
 
 // ---------- 生命周期 ----------

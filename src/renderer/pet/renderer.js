@@ -103,6 +103,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     watchEdges(app);
 
     hideHint();
+
+    // 给开发自检用的出口（主进程用 executeJavaScript 跑检查时会用到）。
+    // 只是把本地对象挂出来，不增加任何权限。
+    window.__petDebug = { app, model, measureLocalBounds, edgeHits, EXPRESSIONS };
+
     log('就绪');
   } catch (err) {
     log('✗ 启动失败: ' + (err && err.message ? err.message : String(err)));
