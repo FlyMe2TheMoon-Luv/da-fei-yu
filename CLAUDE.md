@@ -2,7 +2,7 @@
 
 > 这份文件是给 AI（Claude / WorkBuddy 等）看的项目说明书。
 > **动手写代码前先读它。** 它决定了后续实现会不会跑偏。
-> 最后更新：2026-10-12（阶段 2 全部完成后）
+> 最后更新：2026-10-12（阶段 2 全部完成 + 主人反馈的三处小修之后）
 
 ---
 
@@ -54,6 +54,7 @@ desktop-pet/
 │  │  ├─ scheduler.js     日程轮询引擎：30 秒轮询 + 去重 + 5 分钟宽限（阶段 2-2）
 │  │  ├─ reminder.js      提醒呈现：气泡窗口 + 桌宠表演 + 系统通知兜底（阶段 2-3）
 │  │  ├─ settings-window.js 日程管理窗口：加 / 改 / 删日程（阶段 2-4）
+│  │  ├─ place.js         纯函数：把小窗口摆在桌宠旁边（**刻意不 require electron**，好单测）
 │  │  └─ focus/           专注模式（阶段 3）
 │  ├─ renderer/           ← 界面：浏览器世界，碰不到系统
 │  │  ├─ pet/             桌宠本体
@@ -72,6 +73,7 @@ desktop-pet/
 │  ├─ check-assets.js     素材体检：验图片是不是真透明
 │  ├─ make-tray-icon.js   生成方形托盘图标
 │  ├─ shot.js             截屏（验收用）
+│  ├─ test-place.js       窗口摆放位置自检（纯 Node，不依赖 Electron）
 │  └─ lib/png.js          零依赖 PNG 解码/编码
 └─ spike/                 一次性验证台，可随时删（见 spike/README.md）
 ```
@@ -154,11 +156,29 @@ desktop-pet/
 19. **桌宠「表演」完必须恢复视线跟随** —— 提醒时切表情 + 放动作，期间要摘掉视线跟随，
     但必须定时恢复（`autoInteract = true` + `resetExpression()`），
     否则「眼睛跟着鼠标转」的招牌动作永久丢失且不报错。详见 `HANDOFF.md` 第六节第 23 条。
-20. **设置窗口和前两个窗口的焦点策略正好相反** —— 桌宠 / 气泡是 `focusable: false`
-    （不打扰主人），日程管理窗口**必须能抢焦点**（主人是主动来填表的）。
-    照抄前两个窗口的配置就没法打字了。
-    ⚠ 实测桌宠窗口本身**是** focusable 的，别拿它当「不抢焦点」的负对照，对照不出东西。
-    详见 `HANDOFF.md` 第六节第 24 条。
+20. **三个窗口的焦点策略各不相同，别照抄** ——
+    - 桌宠窗口：`focusable: false` + `showInactive()`（主人打字时点它不能抢焦点）
+    - 提醒气泡：`focusable: false` + `showInactive()`（提醒不能打断打字）
+    - 日程管理窗口：**必须能抢焦点**（主人是主动来填表的），照抄前两个就没法打字了
+    ⚠ 负对照怎么选：**不能拿桌宠窗口当「不抢焦点」的负对照**（它现在确实不抢了，
+    但如果哪天有人改回去，用设置窗口做对照才能同时发现「两边都抢」和「两边都不抢」）。
+    详见 `HANDOFF.md` 第六节第 24、26 条。
+21. **桌宠窗口的显示一律用 `showInactive()`，别写 `show()`** ——
+    `focusable: false` 的窗口在某些 Windows 版本上，`show()` 仍可能顺手把焦点挪过去。
+    `ready-to-show` / `showPet()` / `togglePet()` / 自检里恢复显示，共 4 处，
+    改一处漏一处就会偶发抢焦点。回归哨兵：`npm run test:focus`。
+    详见 `HANDOFF.md` 第六节第 26 条。
+22. **⚠ 带标题栏的窗口在 1.5 倍缩放下「外框尺寸会自己飘」** ——
+    `new BrowserWindow({width:480,height:640})` → `getBounds()` 报 481×641；
+    一次 `setPosition()` 后变 482×642；`setAlwaysOnTop()` 后还会**顺带挪位置**。
+    所以摆位置时**别拿 `getBounds()` 现读尺寸**，要用固定的标称尺寸算，
+    再用 `setBounds()` 把位置和尺寸一起写回去（`settings-window.js` 的
+    `positionNearPet()` 就是这么做的）。详见 `HANDOFF.md` 第六节第 28 条。
+23. **摆窗口位置：不能只按「超出最少」挑方位** —— 主人这台机器上它会选中
+    `up-left`，窗口跑到离宠物 490px 的地方。正确做法是「以夹进工作区后的
+    `up-right` 为靶心，挑离靶心最近的，并且优先不压住桌宠」。
+    逻辑在 `src/main/place.js`（纯函数，`npm run test:place` 穷举 797 种位置验证）。
+    详见 `HANDOFF.md` 第六节第 29 条。
 
 ---
 
@@ -171,7 +191,9 @@ npm run test:schedules       # 日程数据层自检（阶段 2-1，独立脚本
 npm run test:scheduler       # 调度引擎自检（阶段 2-2，纯逻辑、秒出结果）
 npm run test:reminder        # 气泡位置自检（阶段 2-3，纯数学、秒出结果）
 npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）
+npm run test:place           # 窗口摆放位置自检（纯数学、秒出结果）
 npm run test:settings-e2e    # 日程管理窗口端到端（会真的开窗口、写一条日程再删掉）
+npm run test:focus           # 桌宠不抢焦点自检（回归哨兵）
 npm run test:gaze            # 拖拽时视线跟随开关自检（回归哨兵，桌宠开着也能跑）
 npm run test:exit            # 退出按钮自检（回归哨兵）
 npm run build                # 打包（electron-builder）
