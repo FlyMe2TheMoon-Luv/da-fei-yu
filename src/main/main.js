@@ -1013,7 +1013,11 @@ async function runSettingsSelfTest() {
 
   let pass = 0;
   let fail = 0;
-  let petRectBefore = null;   // 开设置窗口之前的桌宠位置，收尾时拿来对照
+  // ⚠ 必须在**开设置窗口之前**就记下桌宠位置。
+  //   曾经记在窗口开出来之后 —— 那样如果 lowerPet()（setAlwaysOnTop）把桌宠挪了，
+  //   两次读数都是「挪过之后」的，断言会假通过。见第六节第 28 条：
+  //   setAlwaysOnTop 在某些缩放下确实会顺带挪窗口。
+  const petRect0 = win.getBounds();
   const ok = (cond, label, extra = '') => {
     if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
     else { fail++; log(`  ✗ ${label}${extra}  ← 失败`); }
@@ -1124,7 +1128,9 @@ async function runSettingsSelfTest() {
     // ★ 负对照：开设置窗口会把桌宠降到普通层级（lowerPet），关掉再升回去（restorePet）。
     //   这两个动作都用 setAlwaysOnTop —— 实测它在某些缩放下会**连带挪动窗口**。
     //   桌宠位置是主人自己拖出来的，被悄悄挪走非常讨厌，所以这里盯住它。
-    petRectBefore = petRect;
+    ok(petRect.x === petRect0.x && petRect.y === petRect0.y,
+      '★ 开设置窗口（lowerPet 降层级）这一步没有挪动桌宠',
+      ` → ${petRect0.x},${petRect0.y} → ${petRect.x},${petRect.y}`);
   }
 
   // 桌宠本该是 screen-saver 层级，会压住设置窗口一块 ——
@@ -1344,14 +1350,12 @@ async function runSettingsSelfTest() {
     ` → 桌宠 isAlwaysOnTop=${win.isAlwaysOnTop()}`);
 
   // ★ 负对照：整个开→关的过程里，桌宠的位置不能被挪动。
-  //   原因见上面 petRectBefore 的注释：lowerPet/restorePet 用的 setAlwaysOnTop
+  //   原因见上面 petRect0 的注释：lowerPet/restorePet 用的 setAlwaysOnTop
   //   在某些缩放下会连带挪窗口。位置是主人自己拖出来的，不该被程序悄悄改掉。
   const petAfter = win.getBounds();
-  if (petRectBefore) {
-    ok(petAfter.x === petRectBefore.x && petAfter.y === petRectBefore.y,
-      '★ 开关设置窗口的全过程中，桌宠位置没有被挪动',
-      ` → ${petRectBefore.x},${petRectBefore.y} → ${petAfter.x},${petAfter.y}`);
-  }
+  ok(petAfter.x === petRect0.x && petAfter.y === petRect0.y,
+    '★ 开关设置窗口的全过程中，桌宠位置都没有被挪动（回到最初的位置）',
+    ` → ${petRect0.x},${petRect0.y} → ${petAfter.x},${petAfter.y}`);
 
   finishExitTest(pass, fail, '日程管理窗口');
 }
