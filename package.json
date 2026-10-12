@@ -22,6 +22,7 @@
     "patch-model": "node scripts/patch-model-expressions.js",
     "check-assets": "node scripts/check-assets.js",
     "make-tray-icon": "node scripts/make-tray-icon.js",
+    "make-launcher": "node scripts/make-launcher.js",
     "shot": "electron scripts/shot.js",
     "build": "electron-builder"
   },
