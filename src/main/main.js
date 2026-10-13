@@ -211,6 +211,18 @@ function createWindow() {
     }), 1500);
   }
 
+  // 开发自检：聊天端到端（见 selftest-chat.js）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'chat') {
+    setTimeout(() => require('./selftest-chat').run({
+      win,
+      log,
+      sleep,
+      finish: finishExitTest,
+      settingsWindow,
+      schedules,
+    }), 1500);
+  }
+
   // 开发自检：桌宠不抢焦点（见 runFocusSelfTest）。
   if (!app.isPackaged && process.env.PET_SELFTEST === 'focus') {
     setTimeout(runFocusSelfTest, 1200);

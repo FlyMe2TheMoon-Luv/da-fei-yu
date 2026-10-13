@@ -80,8 +80,10 @@ if (isolated) {
   //   「取决于上一次跑剩了什么」。
   //   实测踩到过：设置窗口自检在有旧位置时报「压住桌宠 5.3%」，
   //   清空目录后是 2.3%（阈值 5%）。
-  const dir = path.join(os.tmpdir(), 'desktop-pet-selftest');
-  fs.rmSync(dir, { recursive: true, force: true });
+  //   另外：Electron 的 Cache 文件可能被旧进程锁住，rmSync 会抛 EBUSY。
+  //   用带时间戳的目录名，彻底避开「删不掉」的问题。
+  const stamp = Date.now().toString(36);
+  const dir = path.join(os.tmpdir(), `desktop-pet-selftest-${stamp}`);
   rest.push(`--user-data-dir=${dir}`);
 }
 
