@@ -12,6 +12,7 @@
     "test:place": "node scripts/test-place.js",
     "test:quit": "node scripts/test-quit.js",
     "test:week": "node scripts/test-week.js",
+    "test:nl-time": "node scripts/test-nl-time.js",
     "test:scheduler-e2e": "node scripts/start-dev.js --no-gpu --selftest=scheduler --isolated",
     "test:reminder-e2e": "node scripts/start-dev.js --no-gpu --selftest=reminder --isolated",
     "test:settings-e2e": "node scripts/start-dev.js --no-gpu --selftest=settings --isolated",
