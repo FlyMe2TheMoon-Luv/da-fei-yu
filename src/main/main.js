@@ -401,6 +401,9 @@ ipcMain.on('pet:quit', () => {
 // 桌宠身上的「日程管理」按钮 → 打开设置窗口（和托盘菜单同一个入口）
 ipcMain.on('pet:open-settings', () => settingsWindow.open());
 
+// 桌宠身上的「聊天」按钮 → 打开/关闭聊天条
+ipcMain.on('pet:open-chat', () => chatWindow.toggle());
+
 // ---------- 聊天记录 ----------
 const CHAT_FILE = 'chat.json';
 const CHAT_MAX = 200;
@@ -822,6 +825,20 @@ async function runExitButtonSelfTest() {
   if (!btn) { log('✗ 没有按钮，后面没法测'); return finishExitTest(pass, fail); }
   ok(btn.topEl === 'btn-exit', '按钮就在它自己的位置上、没被别的东西盖住', ` → 该点最顶层是 ${btn.topEl}`);
   log(`按钮位置：${btn.cx},${btn.cy}（${btn.w}×${btn.h}）`);
+
+  // 聊天按钮也在它自己的位置上
+  const chatBtn = await win.webContents.executeJavaScript(`(() => {
+    const b = document.getElementById('btn-chat');
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    const cx = Math.round(r.left + r.width / 2);
+    const cy = Math.round(r.top + r.height / 2);
+    const el = document.elementFromPoint(cx, cy);
+    const ui = el && el.closest ? el.closest('[data-ui]') : null;
+    return { cx, cy, topEl: ui ? (ui.id || ui.tagName) : null };
+  })()`);
+  ok(!!chatBtn, '★ 桌宠界面上存在聊天按钮');
+  ok(chatBtn && chatBtn.topEl === 'btn-chat', '★ 聊天按钮没被盖住');
 
   const idle = await hitState();
   ok(idle.through === true, '鼠标不在窗口上时：窗口是穿透的（不挡桌面）', ` → through=${idle.through}`);

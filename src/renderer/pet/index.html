@@ -87,7 +87,8 @@
       justify-content: center;
     }
     #btn-exit { right: 8px; color: #64748b; }
-    #btn-settings { right: 46px; color: #2563eb; }
+    #btn-chat { right: 46px; color: #10b981; }
+    #btn-settings { right: 84px; color: #2563eb; }
     #btn-settings:hover, #btn-exit:hover { opacity: 1; transform: scale(1.08); }
     #btn-settings:hover { background: #2563eb; color: #fff; }
     #btn-exit:hover { background: #ef4444; color: #fff; }
@@ -112,6 +113,12 @@
            stroke-linecap="round" stroke-linejoin="round">
         <circle cx="8" cy="8" r="6.1" />
         <path d="M8 4.5V8l2.4 1.6" />
+      </svg>
+    </button>
+    <button id="btn-chat" data-ui="1" title="和大肥鱼聊天" aria-label="和大肥鱼聊天">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;display:block;">
+        <path d="M2 4.5a2 2 0 012-2h8a2 2 0 012 2v5a2 2 0 01-2 2H6l-3 2.5V4.5z" />
       </svg>
     </button>
     <button id="btn-exit" data-ui="1" title="退出桌宠" aria-label="退出桌宠">✕</button>

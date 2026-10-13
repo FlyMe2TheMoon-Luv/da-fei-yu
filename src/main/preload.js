@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   // ---- 打开日程管理窗口（和托盘菜单「日程管理…」同一个入口）----
   openSettings: () => ipcRenderer.send('pet:open-settings'),
 
+  // ---- 打开聊天条 ----
+  openChat: () => ipcRenderer.send('pet:open-chat'),
+
   // ---- 右键菜单：弹出和托盘一样的菜单 ----
   showMenu: () => ipcRenderer.send('pet:show-menu'),
 
