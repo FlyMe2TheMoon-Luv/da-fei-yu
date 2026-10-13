@@ -19,8 +19,11 @@ const schedules = require('./schedules');
 const scheduler = require('./scheduler');
 const reminder = require('./reminder');
 const settingsWindow = require('./settings-window');
+const chatWindow = require('./chat-window');
 const week = require('./week');             // 周视图自检要拿它做交叉验证
 const { placeNear } = require('./place');   // 自检里要复算一遍设置窗口该待的位置
+const brain = require('./brain');
+const aiConfig = require('./ai-config');
 
 const log = (m) => console.log('[main] ' + m);
 
@@ -294,6 +297,7 @@ function menuTemplate() {
   return [
     { label: '显示 / 隐藏', click: togglePet },
     { label: '日程管理…', click: () => settingsWindow.open() },
+    { label: '和大肥鱼聊天', click: () => chatWindow.toggle() },
     { type: 'separator' },
     { label: '重置位置', click: resetPosition },
     { type: 'separator' },
@@ -396,6 +400,104 @@ ipcMain.on('pet:quit', () => {
 
 // 桌宠身上的「日程管理」按钮 → 打开设置窗口（和托盘菜单同一个入口）
 ipcMain.on('pet:open-settings', () => settingsWindow.open());
+
+// ---------- 聊天记录 ----------
+const CHAT_FILE = 'chat.json';
+const CHAT_MAX = 200;
+
+function loadChatHistory() {
+  const raw = store.read(CHAT_FILE, []);
+  return Array.isArray(raw) ? raw : [];
+}
+
+function pushChat(role, text, scheduleId = null) {
+  const list = loadChatHistory();
+  list.push({ role, text, at: Date.now(), scheduleId });
+  while (list.length > CHAT_MAX) list.shift();
+  store.write(CHAT_FILE, list);
+}
+
+function clearChatHistory() {
+  store.write(CHAT_FILE, []);
+}
+
+// ---------- 聊天 IPC ----------
+
+ipcMain.handle('chat:send', async (_e, text) => {
+  const now = new Date();
+  pushChat('me', text);
+
+  brain.init({
+    getItems: () => schedules.list(),
+    getConfig: () => aiConfig.read(),
+  });
+
+  const result = await brain.respond(text, now);
+
+  let created = null;
+  if (result.draft) {
+    const addResult = schedules.add(result.draft);
+    if (addResult.error) {
+      result.reply += '（这条我没记住，你再说一次？）';
+      result.draft = null;
+    } else {
+      created = { id: addResult.id, title: addResult.title, time: addResult.time, endTime: addResult.endTime };
+    }
+  }
+
+  pushChat('fish', result.reply, created && created.id ? created.id : null);
+  return { ...result, created };
+});
+
+ipcMain.handle('chat:history', () => loadChatHistory());
+
+ipcMain.handle('chat:clear', () => {
+  clearChatHistory();
+  return true;
+});
+
+ipcMain.handle('chat:undo', (_e, scheduleId) => {
+  if (scheduleId) schedules.remove(scheduleId);
+  return true;
+});
+
+ipcMain.handle('chat:config-get', () => {
+  const cfg = aiConfig.read();
+  return {
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    enabled: cfg.enabled,
+    keyMask: aiConfig.maskKey(cfg.apiKey),
+    hasKey: Boolean(cfg.apiKey),
+  };
+});
+
+ipcMain.handle('chat:config-set', (_e, cfg) => {
+  const old = aiConfig.read();
+  const next = {
+    baseUrl: typeof cfg.baseUrl === 'string' ? cfg.baseUrl : old.baseUrl,
+    model: typeof cfg.model === 'string' ? cfg.model : old.model,
+    // apiKey 空串表示「不改」
+    apiKey: typeof cfg.apiKey === 'string' && cfg.apiKey ? cfg.apiKey : old.apiKey,
+    enabled: Boolean(cfg.enabled),
+  };
+  aiConfig.write(next);
+  // 让 cloud 模块立刻拿到新配置
+  const cloud = require('./brain/cloud');
+  cloud.configure({ baseUrl: next.baseUrl, apiKey: next.apiKey, model: next.model });
+  return true;
+});
+
+ipcMain.handle('chat:config-test', async () => {
+  const cfg = aiConfig.read();
+  const cloud = require('./brain/cloud');
+  cloud.configure({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, model: cfg.model, timeoutMs: 8000 });
+  const res = await cloud.respond('你好', { now: new Date(), items: [] });
+  if (res.error) return { ok: false, error: res.error };
+  return { ok: true };
+});
+
+ipcMain.on('chat:close', () => chatWindow.close());
 
 // ---------- 开发自检 ----------
 
@@ -2042,12 +2144,22 @@ if (!gotLock) {
       onPreview: () => reminder.present({ title: '开会（预览效果）' }, new Date()),
       // 设置窗口打开期间要临时把桌宠降到普通层级，否则桌宠会压住设置窗口
       getPetWindow: () => win,
+      // 聊天条也要跟着降层，否则设置窗口会被聊天条压住一块
+      getChatWindow: () => chatWindow.getWindow(),
     });
+
+    // Task 11：聊天条窗口
+    chatWindow.init({ getPetWindow: () => win });
 
     // 开发便利：启动时直接把日程管理窗口开出来，方便做视觉验收 / 截图。
     //   PET_OPEN_SETTINGS=1 npm start -- --no-gpu
     if (!app.isPackaged && process.env.PET_OPEN_SETTINGS === '1') {
       setTimeout(() => settingsWindow.open(), 2500);
+    }
+    // 开发便利：启动时直接打开聊天条
+    //   PET_OPEN_CHAT=1 npm start -- --no-gpu
+    if (!app.isPackaged && process.env.PET_OPEN_CHAT === '1') {
+      setTimeout(() => chatWindow.open(), 2800);
     }
 
     // 阶段 2-2：日程调度引擎。每 30 秒扫一遍，到点回调（启动时也会立刻扫一次，

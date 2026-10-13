@@ -41,6 +41,7 @@ let inited = false;
 let mode = 'list';         // 'list' | 'week'
 let onPreview = null;      // 由 main.js 注入：点「预览提醒效果」时调 reminder.present
 let getPetWindow = () => null; // 由 main.js 注入：要临时把桌宠「降一层」
+let getChatWindow = () => null; // 由 main.js 注入：设置窗口打开时聊天条也要降层
 
 // ---------- 窗口尺寸 ----------
 
@@ -71,25 +72,44 @@ function workAreaFor() {
 // （只降「层级」，不隐藏桌宠 —— 它还在，只是可以被设置窗口盖住。）
 function lowerPet() {
   const pet = getPetWindow();
-  if (!pet || pet.isDestroyed()) return;
-  try {
-    pet.setAlwaysOnTop(false);
-    pet.setVisibleOnAllWorkspaces(false);
-    console.log('[settings] 桌宠已降到普通层级（让设置窗口能盖住它）');
-  } catch (err) {
-    console.error('[settings] 降桌宠层级失败：', err && err.message);
+  if (pet && !pet.isDestroyed()) {
+    try {
+      pet.setAlwaysOnTop(false);
+      pet.setVisibleOnAllWorkspaces(false);
+      console.log('[settings] 桌宠已降到普通层级（让设置窗口能盖住它）');
+    } catch (err) {
+      console.error('[settings] 降桌宠层级失败：', err && err.message);
+    }
+  }
+  // 聊天条也要降层，否则设置窗口会被聊天条压住一块
+  const chat = getChatWindow();
+  if (chat && !chat.isDestroyed()) {
+    try {
+      chat.setAlwaysOnTop(false);
+    } catch (err) {
+      console.error('[settings] 降聊天条层级失败：', err && err.message);
+    }
   }
 }
 
 function restorePet() {
   const pet = getPetWindow();
-  if (!pet || pet.isDestroyed()) return;
-  try {
-    pet.setAlwaysOnTop(true, 'screen-saver');
-    pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    console.log('[settings] 桌宠层级已恢复（继续浮在最上层）');
-  } catch (err) {
-    console.error('[settings] 恢复桌宠层级失败：', err && err.message);
+  if (pet && !pet.isDestroyed()) {
+    try {
+      pet.setAlwaysOnTop(true, 'screen-saver');
+      pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      console.log('[settings] 桌宠层级已恢复（继续浮在最上层）');
+    } catch (err) {
+      console.error('[settings] 恢复桌宠层级失败：', err && err.message);
+    }
+  }
+  const chat = getChatWindow();
+  if (chat && !chat.isDestroyed()) {
+    try {
+      chat.setAlwaysOnTop(true);
+    } catch (err) {
+      console.error('[settings] 恢复聊天条层级失败：', err && err.message);
+    }
   }
 }
 
@@ -308,6 +328,7 @@ function isOpen() {
 function init(opts = {}) {
   if (typeof opts.onPreview === 'function') onPreview = opts.onPreview;
   if (typeof opts.getPetWindow === 'function') getPetWindow = opts.getPetWindow;
+  if (typeof opts.getChatWindow === 'function') getChatWindow = opts.getChatWindow;
   if (inited) return;
   inited = true;
 
