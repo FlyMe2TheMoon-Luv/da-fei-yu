@@ -27,6 +27,7 @@
     "test:week-e2e": "node scripts/start-dev.js --no-gpu --selftest=week --isolated",
     "test:chat-e2e": "node scripts/start-dev.js --no-gpu --selftest=chat --isolated",
     "test:focus-blacklist": "node scripts/test-focus-blacklist.js",
+    "test:focus-timer": "node scripts/test-focus-timer.js",
     "sync-vendor": "node scripts/sync-vendor.js",
     "patch-model": "node scripts/patch-model-expressions.js",
     "check-assets": "node scripts/check-assets.js",
