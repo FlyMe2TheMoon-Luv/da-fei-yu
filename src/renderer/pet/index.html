@@ -67,7 +67,7 @@
          · 白底 + 一圈白色描边（box-shadow 的第一段），不管角色是深是浅都浮得出来
          · 图标本身带颜色（日程=蓝、退出=灰红），不再是灰扑扑一团
          · 启动后「呼吸」三下，帮主人一眼发现这里有东西 */
-    #btn-settings, #btn-exit {
+    #btn-settings, #btn-chat, #btn-exit {
       position: absolute;
       top: 8px;
       width: 30px;
@@ -89,8 +89,9 @@
     #btn-exit { right: 8px; color: #64748b; }
     #btn-chat { right: 46px; color: #10b981; }
     #btn-settings { right: 84px; color: #2563eb; }
-    #btn-settings:hover, #btn-exit:hover { opacity: 1; transform: scale(1.08); }
+    #btn-settings:hover, #btn-chat:hover, #btn-exit:hover { opacity: 1; transform: scale(1.08); }
     #btn-settings:hover { background: #2563eb; color: #fff; }
+    #btn-chat:hover { background: #10b981; color: #fff; }
     #btn-exit:hover { background: #ef4444; color: #fff; }
     #btn-settings svg { width: 17px; height: 17px; display: block; }
 
@@ -99,7 +100,7 @@
       0%, 100% { transform: scale(1); }
       50%      { transform: scale(1.18); }
     }
-    #btn-settings.attn, #btn-exit.attn { animation: btn-attn 1.1s ease-in-out 3; }
+    #btn-settings.attn, #btn-chat.attn, #btn-exit.attn { animation: btn-attn 1.1s ease-in-out 3; }
   </style>
 </head>
 <body>

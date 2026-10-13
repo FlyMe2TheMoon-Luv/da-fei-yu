@@ -851,6 +851,16 @@ async function runExitButtonSelfTest() {
   })()`);
   ok(!!chatBtn, '★ 桌宠界面上存在聊天按钮');
   ok(chatBtn && chatBtn.topEl === 'btn-chat', '★ 聊天按钮没被盖住');
+  // ★ 光「存在」不够 —— 必须真的落在右上角按钮堆里。
+  //   踩过：给 #btn-chat 写了 right:46px 却漏把它加进共享样式选择器，
+  //   于是它没有 position:absolute，静态布局掉到窗口左上角 (3,3)，
+  //   把角色左上角那块挡住了、也压掉了「鼠标移开恢复穿透」。
+  //   「存在」和「在对的地方」是两回事。
+  if (chatBtn) {
+    const winW = await win.webContents.executeJavaScript('window.innerWidth');
+    ok(chatBtn.cx > winW * 0.6, '★ 聊天按钮真的在右上角（不是掉到左边）',
+      ` → 按钮中心 x=${chatBtn.cx}，窗口宽 ${winW}`);
+  }
 
   const idle = await hitState();
   ok(idle.through === true, '鼠标不在窗口上时：窗口是穿透的（不挡桌面）', ` → through=${idle.through}`);
