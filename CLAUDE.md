@@ -228,6 +228,24 @@ desktop-pet/
     复用旧目录会让下次自检的桌宠停在上次遗留的位置上，
     而窗口尺寸/重叠面积都跟位置有关，结果变得不可复现
     （实测：`test:settings-e2e` 因此报「压住桌宠 5.3%」失败，清空后 2.3% 通过）。
+    现在改成**带时间戳的目录名**，顺带躲开「Cache 文件被锁住导致 rmSync 抛 EBUSY」。
+31. **⚠️ `executeJavaScript` 在同一个全局作用域求值，`const` 会重复声明** ——
+    第一次注入成功、第二次抛 `Script failed to execute`，且报在主进程的
+    UnhandledPromiseRejection 里，看不出跟脚本有关。**每段注入脚本都要包 IIFE**：
+    `(() => { const x = ...; return ...; })()`。
+32. **⚠️ 断言别用 `!== null` 判「量到了没有」** —— 注入脚本 early-return 时字段是
+    `undefined`，而 `undefined !== null` 是 `true` → 断言假通过。要用 `typeof x === 'number'`。
+33. **⚠️ 中文短标题取色不能用「字符码累加模 N」** —— CJK 码点集中，会扎堆
+    （`吃药/买菜/健身` 全同色）。用 FNV-1a；断言要严（「6 个常见名 ≥ 4 色」）。
+34. **⚠️「窗口形态变了」≠「内容重画了」** —— 主进程切模式时，界面除了切 DOM 显示，
+    还要真的去拉数据重渲染，否则是个空框。
+35. **v2 新增目录** —— `src/main/week.js`（周视图布局纯函数）、`src/main/nl-time.js`
+    （中文大白话解析）、`src/main/brain/`（`local.js` / `cloud.js` / `index.js` 三件套）、
+    `src/main/chat-window.js` + `preload-chat.js` + `renderer/chat/`（聊天条）、
+    `src/main/ai-config.js`（云端 Key 存取）。
+36. **v2 新增硬性约定** —— 任何大脑产出的日程草案**必须过 `schedules.sanitize()` 才能落盘**；
+    聊天条 `focusable: true`（和气泡相反）；聊天文本一律 `textContent`；
+    API Key 只存 `userData/ai-config.json`，界面只拿掩码，日志绝不出现明文。
 
 ---
 
@@ -237,22 +255,35 @@ desktop-pet/
 npm start                    # 启动桌宠（开发）
 npm start -- --no-gpu        # 无 GPU 沙箱环境用这条
 npm run make-launcher        # 生成桌面上的「启动桌宠 / 停止桌宠」双击快捷方式
-npm run test:schedules       # 日程数据层自检（阶段 2-1，独立脚本，随时能跑）
-npm run test:scheduler       # 调度引擎自检（阶段 2-2，纯逻辑、秒出结果）
-npm run test:reminder        # 气泡位置自检（阶段 2-3，纯数学、秒出结果）
+
+# 纯 Node 单测（快，先跑这些）
+npm run test:schedules       # 日程数据层 63
+npm run test:scheduler       # 调度引擎 39
+npm run test:reminder        # 气泡位置 14
+npm run test:place           # 窗口摆放位置 37
+npm run test:quit            # 「停止桌宠」端到端 8
+npm run test:week            # 周视图布局纯函数 53
+npm run test:nl-time         # 中文大白话解析 23
+npm run test:brain-local     # 本地大脑 19
+npm run test:brain-cloud     # 云端大脑 18
+npm run test:brain-router    # 大脑路由 19
+
+# Electron 端到端自检（慢，串行跑）
+npm run test:settings-e2e    # 日程管理窗口（含周视图）80
+npm run test:week-e2e        # 周视图端到端 19
+npm run test:chat-e2e        # 聊天端到端 17
 npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）
-npm run test:place           # 窗口摆放位置自检（纯数学、秒出结果）
-npm run test:settings-e2e    # 日程管理窗口端到端（会真的开窗口、写一条日程再删掉）
-npm run test:quit            # 「停止桌宠」端到端自检（独立脚本，含负对照）
-npm run test:sync            # 按钮与桌宠同步自检（拖拽时按钮不许飘）
-npm run test:focus           # 桌宠不抢焦点自检（回归哨兵）
-npm run test:gaze            # 拖拽时视线跟随开关自检（回归哨兵，桌宠开着也能跑）
-npm run test:exit            # 退出按钮自检（回归哨兵）
+npm run test:sync            # 按钮与桌宠同步（拖拽时按钮不许飘）
+npm run test:focus           # 桌宠不抢焦点（回归哨兵）
+npm run test:gaze            # 拖拽时视线跟随开关（回归哨兵）
+npm run test:exit            # 退出按钮（回归哨兵）
 npm run build                # 打包（electron-builder）
 ```
 
-开发便利：`PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 会在启动时自动打开日程管理窗口
-（做视觉验收 / 截图用）。
+开发便利：
+- `PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 启动时自动打开日程管理窗口
+- `PET_OPEN_CHAT=1 npm start -- --no-gpu` 启动时自动打开聊天条
+（都是做视觉验收 / 截图用）
 
 ---
 
