@@ -20,6 +20,7 @@ const scheduler = require('./scheduler');
 const reminder = require('./reminder');
 const settingsWindow = require('./settings-window');
 const chatWindow = require('./chat-window');
+const focus = require('./focus');           // v3 专注模式主控（Task 4 起：只计时，不碰系统）
 const week = require('./week');             // 周视图自检要拿它做交叉验证
 const { placeNear } = require('./place');   // 自检里要复算一遍设置窗口该待的位置
 const brain = require('./brain');
@@ -2104,6 +2105,198 @@ async function runSettingsSelfTest() {
       ` → 剩 ${after.items} 条 · 提示显示=${after.emptyShown}`);
   }
 
+  // ===== ⑧b 专注页（阶段 3 · Task 4）=====
+  // 这一段只验「计时 + 配置」的地基，**不碰系统**（改 hosts / 关软件在 Task 6-8）。
+  // 从干净状态开始：先确保没在专注，再清空名单（专注中不允许清）。
+  focus.stop('selftest-reset');
+  focus.setBlacklist({ domains: [], exes: [] });
+
+  log('⑧b 专注页：切过去、加名单、选时长、开始、倒计时');
+  const focusOpen = await sw.webContents.executeJavaScript(`(async () => {
+    const btn = document.getElementById('btn-focus');
+    if (!btn) return { missingBtn: true };
+    btn.click();
+    await new Promise((r) => setTimeout(r, 700));
+    return {
+      pageShown: !document.getElementById('focus-page').classList.contains('hidden'),
+      listHidden: document.querySelector('.list-wrap').classList.contains('hidden'),
+      hasStart: !!document.getElementById('btn-focus-start'),
+      hasStop: !!document.getElementById('btn-focus-stop'),
+    };
+  })()`);
+
+  if (focusOpen.missingBtn) {
+    ok(false, '★ 工具栏上没有「专注」按钮（#btn-focus）—— 专注页根本打不开');
+  } else {
+    ok(focusOpen.pageShown === true && focusOpen.listHidden === true,
+      '★ 点「专注」后专注页出现了、日程列表藏起来了');
+    ok(focusOpen.hasStart === true && focusOpen.hasStop === true,
+      '专注页上有「开始专注」和「结束专注」两个按钮');
+  }
+
+  // 顺带验「专注页真的排开了版」——不是掉到左上角、也不是高度为 0 的隐形页。
+  // （项目里踩过「漏加共享样式 → 控件掉到左上角」的坑，见 HANDOFF 第六节第 21 条。）
+  {
+    const layout = await sw.webContents.executeJavaScript(`(() => {
+      const r = document.getElementById('focus-page').getBoundingClientRect();
+      return {
+        w: Math.round(r.width), h: Math.round(r.height),
+        presets: document.querySelectorAll('#focus-presets button').length,
+      };
+    })()`);
+    ok(layout.w > 300 && layout.h > 300,
+      '★ 专注页真的铺开了（有实际宽高，不是隐形页）', ` → ${layout.w}×${layout.h}`);
+    ok(layout.presets >= 4, '预设按钮是 3 个固定时长 + 1 个「自定义」',
+      ` → ${layout.presets} 个`);
+  }
+
+  // ★ 负对照：黑名单空着点「开始专注」→ 必须被拒（不能「专注了个寂寞」）
+  log('⑧b′ ★ 负对照：黑名单空着点「开始专注」→ 被拒');
+  const emptyStart = await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('btn-focus-start').click();
+    await new Promise((r) => setTimeout(r, 500));
+    const err = document.getElementById('focus-error');
+    return {
+      errorShown: !err.classList.contains('hidden'),
+      errorText: err.textContent,
+      stillIdle: !document.getElementById('focus-idle').classList.contains('hidden'),
+    };
+  })()`);
+  ok(emptyStart.errorShown === true, '界面上给出了「先加一个要挡住的东西」的提示',
+    ` → “${emptyStart.errorText}”`);
+  ok(emptyStart.stillIdle === true, '界面还停在「开始」那一步（没切到倒计时）');
+  ok(focus.state().session === null, '★ 主进程那边 session 还是 null（确实没开始）');
+
+  // ★ 正例：粘的是完整网址，列表里必须出现**洗干净**的域名
+  log('⑧b″ 加一条网站（粘完整网址，要洗成域名）');
+  const addDomain = await sw.webContents.executeJavaScript(`(async () => {
+    const input = document.getElementById('f-domain-input');
+    input.value = 'https://www.bilibili.com/video/BV1xx?t=1';
+    document.getElementById('btn-add-domain').click();
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      shown: [...document.querySelectorAll('#focus-domains .focus-val')].map((x) => x.textContent),
+      inputCleared: input.value === '',
+    };
+  })()`);
+  ok(addDomain.shown.includes('www.bilibili.com'),
+    '★ 列表里出现的是洗干净的「www.bilibili.com」（不是原样粘进去的整串）',
+    ` → ${JSON.stringify(addDomain.shown)}`);
+  ok(addDomain.inputCleared === true, '加完之后输入框清空了');
+  ok(focus.state().domains.includes('www.bilibili.com'), '★ 主进程那边也真的存进去了');
+
+  // ★ 负对照：把桌宠自己的进程名加进「软件」→ 必须被拒
+  log('⑧b‴ ★ 负对照：把 electron.exe 加进「软件」→ 被拒（不许把自己杀了）');
+  const addBadExe = await sw.webContents.executeJavaScript(`(async () => {
+    const err = document.getElementById('focus-error');
+    err.classList.add('hidden');   // 先清掉上一步的提示，才看得出这一步有没有新提示
+    const input = document.getElementById('f-exe-input');
+    input.value = 'electron.exe';
+    document.getElementById('btn-add-exe').click();
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      shown: [...document.querySelectorAll('#focus-exes .focus-val')].map((x) => x.textContent),
+      errorShown: !err.classList.contains('hidden'),
+      errorText: err.textContent,
+    };
+  })()`);
+  ok(!addBadExe.shown.includes('electron.exe'), '★ 列表里没有 electron.exe');
+  ok(addBadExe.errorShown === true, '界面上给出了错误提示（告诉主人为什么不行）',
+    ` → “${addBadExe.errorText}”`);
+  ok(focus.state().exes.length === 0, '★ 主进程那边也没存进去');
+
+  log('⑧b⁗ 选「25 分钟」');
+  const preset = await sw.webContents.executeJavaScript(`(async () => {
+    const b = [...document.querySelectorAll('#focus-presets button')]
+      .find((x) => x.dataset.minutes === '25');
+    if (!b) return { missing: true };
+    b.click();
+    await new Promise((r) => setTimeout(r, 400));
+    return {
+      on: [...document.querySelectorAll('#focus-presets button.on')].map((x) => x.dataset.minutes),
+    };
+  })()`);
+  if (preset.missing) {
+    ok(false, '★ 预设按钮里没有「25 分钟」');
+  } else {
+    ok(preset.on.includes('25'), '★ 点「25 分钟」后它高亮选中了', ` → 选中 ${JSON.stringify(preset.on)}`);
+    ok(focus.state().lastMinutes === 25, '★ 主进程那边 lastMinutes === 25', ` → ${focus.state().lastMinutes}`);
+  }
+
+  log('⑧b⁵ 开始专注（25 分钟）');
+  const started = await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('btn-focus-start').click();
+    await new Promise((r) => setTimeout(r, 600));
+    return {
+      runningShown: !document.getElementById('focus-running').classList.contains('hidden'),
+      idleHidden: document.getElementById('focus-idle').classList.contains('hidden'),
+      countdown: document.getElementById('focus-countdown').textContent.trim(),
+    };
+  })()`);
+  const st1 = focus.state();
+  ok(!!st1.session && st1.session.state === 'running', '★ 主进程那边真的开始了一个会话',
+    ` → ${st1.session ? st1.session.state : 'null'}`);
+  {
+    const wantEnd = Date.now() + 25 * 60 * 1000;
+    const diff = st1.session ? Math.abs(st1.session.endsAt - wantEnd) : Infinity;
+    ok(diff < 5000, '★ 结束时刻约等于「现在 + 25 分钟」',
+      ` → 差 ${Number.isFinite(diff) ? Math.round(diff / 1000) : '?'} 秒`);
+  }
+  ok(started.runningShown === true && started.idleHidden === true, '界面上切到了倒计时的样子');
+  ok(/^2[45]:\d{2}$/.test(started.countdown), '倒计时数字显示出来了（25:00 上下）',
+    ` → “${started.countdown}”`);
+  {
+    const ring = await sw.webContents.executeJavaScript(`(() => {
+      const fg = document.getElementById('focus-ring-fg');
+      return { dash: fg.style.strokeDasharray, offset: fg.style.strokeDashoffset };
+    })()`);
+    ok(!!ring.dash && !!ring.offset, '★ 进度环也画出来了（dasharray / offset 都设上了）',
+      ` → dash=${ring.dash} offset=${ring.offset}`);
+  }
+
+  // ★ 负对照：专注进行中改黑名单 → 必须被拒（防止「开着专注偷偷把自己放出来」）
+  log('⑧b⁶ ★ 负对照：专注进行中改黑名单 → 被拒');
+  const lockedChange = await sw.webContents.executeJavaScript(`(async () => {
+    const err = document.getElementById('focus-error');
+    err.classList.add('hidden');
+    const input = document.getElementById('f-domain-input');
+    input.value = 'zhihu.com';
+    document.getElementById('btn-add-domain').click();
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      errorShown: !err.classList.contains('hidden'),
+      errorText: err.textContent,
+    };
+  })()`);
+  ok(lockedChange.errorShown === true, '界面提示了「专注中不能改」', ` → “${lockedChange.errorText}”`);
+  ok(!focus.state().domains.includes('zhihu.com'), '★ 主进程那边的名单没变（专注期间锁住了）',
+    ` → ${JSON.stringify(focus.state().domains)}`);
+  // ★ 负对照：专注中再点一次「开始专注」→ 不许重置计时（endsAt 不能变）
+  log('⑧b⁷ ★ 负对照：专注中再点一次「开始专注」→ 不重置计时');
+  const endsBefore = focus.state().session.endsAt;
+  await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('btn-focus-start').click();
+    await new Promise((r) => setTimeout(r, 400));
+  })()`);
+  ok(focus.state().session && focus.state().session.endsAt === endsBefore,
+    '★ 结束时刻没被重置（没有「再点一次就重新计时」）',
+    ` → ${endsBefore} → ${focus.state().session && focus.state().session.endsAt}`);
+
+  log('⑧b⁸ 收尾：结束专注、清空名单、回到日程列表');
+  focus.stop('selftest-cleanup');
+  focus.setBlacklist({ domains: [], exes: [] });
+  const backToList = await sw.webContents.executeJavaScript(`(async () => {
+    document.getElementById('btn-focus-back').click();
+    await new Promise((r) => setTimeout(r, 600));
+    return {
+      focusHidden: document.getElementById('focus-page').classList.contains('hidden'),
+      listShown: !document.querySelector('.list-wrap').classList.contains('hidden'),
+    };
+  })()`);
+  ok(backToList.focusHidden === true && backToList.listShown === true, '点「返回日程」回到了列表');
+  ok(focus.state().session === null && focus.state().domains.length === 0,
+    '★ 收尾后没有残留的专注会话 / 黑名单');
+
   // ===== ⑨ 收尾 =====
   log('⑨ 收尾');
   for (const it of schedules.list()) {
@@ -2190,10 +2383,23 @@ if (!gotLock) {
     // Task 11：聊天条窗口
     chatWindow.init({ getPetWindow: () => win });
 
+    // 阶段 3：专注模式主控。
+    // 第一段（Task 4）只做「计时 + 配置」，完全不碰系统；
+    // 会话状态一变就广播一声 —— Task 5 的宠物陪伴会接在这里换姿态、说话。
+    focus.init({
+      onChange: (st) => {
+        // 现在只是打条日志；Task 5 起这里会通知桌宠
+        console.log(`[main] 专注状态变化：${st.running ? `进行中（还剩 ${Math.round(st.remainingMs / 1000)} 秒）` : '未专注'}`);
+      },
+    });
+
     // 开发便利：启动时直接把日程管理窗口开出来，方便做视觉验收 / 截图。
-    //   PET_OPEN_SETTINGS=1 npm start -- --no-gpu
-    if (!app.isPackaged && process.env.PET_OPEN_SETTINGS === '1') {
-      setTimeout(() => settingsWindow.open(), 2500);
+    //   PET_OPEN_SETTINGS=1     → 开在「列表」
+    //   PET_OPEN_SETTINGS=focus → 直接开在「专注」页
+    //   PET_OPEN_SETTINGS=week  → 直接开在「周视图」
+    if (!app.isPackaged && process.env.PET_OPEN_SETTINGS) {
+      const m = process.env.PET_OPEN_SETTINGS === '1' ? 'list' : process.env.PET_OPEN_SETTINGS;
+      setTimeout(() => settingsWindow.open(m), 2500);
     }
     // 开发便利：启动时直接打开聊天条
     //   PET_OPEN_CHAT=1 npm start -- --no-gpu

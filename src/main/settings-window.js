@@ -21,16 +21,20 @@ const { app, BrowserWindow, ipcMain, screen } = require('electron');
 const path = require('path');
 const schedules = require('./schedules');
 const week = require('./week');
+const focus = require('./focus');
+const blacklist = require('./focus/blacklist');
 const { placeNear } = require('./place');
 
 const HTML = path.join(__dirname, '..', 'renderer', 'settings', 'index.html');
 const PRELOAD = path.join(__dirname, 'preload-settings.js');
 
-// v2：这个窗口有「列表 / 周视图」两种模式，每种一个尺寸。
-// 周视图要放下七列 + 时间刻度，所以宽得多。
+// 这个窗口有三种模式，每种一个尺寸。
+// 周视图要放下七列 + 时间刻度，所以宽得多；
+// 专注页（v3）内容不多，跟列表一样宽就行，省得窗口忽大忽小。
 const SIZES = {
   list: { w: 480, h: 640 },
   week: { w: 1000, h: 680 },
+  focus: { w: 480, h: 640 },
 };
 // WIN_W / WIN_H 是「列表模式」的别名 —— 现有自检和 placeNear 复算都在用，别删。
 const WIN_W = SIZES.list.w;
@@ -38,7 +42,7 @@ const WIN_H = SIZES.list.h;
 
 let win = null;
 let inited = false;
-let mode = 'list';         // 'list' | 'week'
+let mode = 'list';         // 'list' | 'week' | 'focus'
 let onPreview = null;      // 由 main.js 注入：点「预览提醒效果」时调 reminder.present
 let getPetWindow = () => null; // 由 main.js 注入：要临时把桌宠「降一层」
 let getChatWindow = () => null; // 由 main.js 注入：设置窗口打开时聊天条也要降层
@@ -152,10 +156,10 @@ function positionNearPet() {
   }
 }
 
-// 切换「列表 / 周视图」：换窗口尺寸 → 重新摆位 → 把结果告诉界面。
+// 切换「列表 / 周视图 / 专注」：换窗口尺寸 → 重新摆位 → 把结果告诉界面。
 // 界面**不做任何尺寸计算**，只负责把内容换掉（渲染进程拿不到屏幕信息）。
 function setMode(next) {
-  mode = next === 'week' ? 'week' : 'list';
+  mode = (next === 'week' || next === 'focus') ? next : 'list';
 
   if (!win || win.isDestroyed()) return mode;
 
@@ -237,7 +241,9 @@ function weekData() {
 
 // ---------- 窗口 ----------
 
-function open() {
+// startMode：'list'（默认）| 'week' | 'focus'。
+// 只有开发时的「直接开在某一页」入口会传它；正常打开一律从列表开始。
+function open(startMode = 'list') {
   // 已经开着就直接拉到前面，不重复开第二个（主人点两次菜单不该出现两个窗口）
   if (win && !win.isDestroyed()) {
     if (win.isMinimized()) win.restore();
@@ -249,7 +255,7 @@ function open() {
   console.log('[settings] 打开日程管理窗口');
 
   // 每次打开都从「列表」开始 —— 行为可预测，也不会让窗口以周视图的大尺寸突然出现
-  mode = 'list';
+  mode = (startMode === 'week' || startMode === 'focus') ? startMode : 'list';
 
   win = new BrowserWindow({
     width: WIN_W,
@@ -274,6 +280,13 @@ function open() {
 
   win.setMenuBarVisibility(false); // 用不上菜单栏，藏掉省地方
   win.loadFile(HTML);
+
+  // 把「打开时就在哪一页」告诉界面。
+  // 正常打开是 list，界面自己初始也是 list → 这条等于空操作；
+  // 只有开发入口（PET_OPEN_SETTINGS=focus）直接开在某一页时才需要它。
+  win.webContents.once('did-finish-load', () => {
+    if (mode !== 'list') win.webContents.send('week:mode', mode);
+  });
 
   // 先摆一次位置（此刻窗口还藏着，主人看不到挪动过程）。
   // ready-to-show 里还会再摆一次 —— 那时外框尺寸才算彻底定下来。
@@ -361,6 +374,30 @@ function init(opts = {}) {
     }
   });
   ipcMain.handle('week:set-mode', (_e, m) => setMode(m));
+
+  // ---- 专注模式（v3）----
+  // ⚠ 校验一律走 focus/blacklist.js —— 界面不许自带第二套规则。
+  //   这里只做转交：把界面递上来的东西原样交给 focus 主控。
+  ipcMain.handle('focus:get', () => {
+    try {
+      return focus.state();
+    } catch (err) {
+      console.error('[settings] 读专注配置失败：', err && err.message);
+      return null;
+    }
+  });
+  // 界面「加一条」时先问一句「这条行不行」——立刻给人话原因，不用先写盘再回滚
+  ipcMain.handle('focus:normalize', (_e, payload) => {
+    const { kind, raw } = payload || {};
+    return kind === 'exe' ? blacklist.normalizeExe(raw) : blacklist.normalizeDomain(raw);
+  });
+  ipcMain.handle('focus:set-blacklist', (_e, list) => focus.setBlacklist(list || {}));
+  ipcMain.handle('focus:set-preset', (_e, minutes) => focus.setPreset(minutes));
+  ipcMain.handle('focus:start', (_e, opts) => focus.start(opts || {}));
+  // 「结束专注」要报「按下那一刻」——够没够 3 秒由 focus/requestStop 判（规则只有一处）
+  ipcMain.handle('focus:stop', (_e, payload) => focus.requestStop(payload || {}));
+  // 倒计时刷新用（和 focus:get 同源，单独留一个语义清晰的通道）
+  ipcMain.handle('focus:state', () => focus.state());
 
   // ---- 预览提醒效果 ----
   ipcMain.handle('reminder:preview', async () => {

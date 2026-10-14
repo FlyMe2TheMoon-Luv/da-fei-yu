@@ -32,4 +32,17 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   // ---- 预览：立刻弹一次提醒，看看效果 ----
   // 主人不用等到点才知道长什么样（也不用干等 30 秒轮询）。
   preview: () => ipcRenderer.invoke('reminder:preview'),
+
+  // ---- 专注模式（v3）----
+  // 配置和会话状态全部由主进程说了算，界面只负责画。
+  // 校验（哪条网址 / 程序名能加）也在主进程，界面不许自带第二套规则。
+  focusGet: () => ipcRenderer.invoke('focus:get'),
+  focusState: () => ipcRenderer.invoke('focus:state'),
+  // 「这条行不行」——加一条之前先问一句，立刻拿到人话原因
+  focusNormalize: (kind, raw) => ipcRenderer.invoke('focus:normalize', { kind, raw }),
+  focusSetBlacklist: (list) => ipcRenderer.invoke('focus:set-blacklist', list),
+  focusSetPreset: (minutes) => ipcRenderer.invoke('focus:set-preset', minutes),
+  focusStart: (opts) => ipcRenderer.invoke('focus:start', opts),
+  // payload = { pressedAt }：按下「结束专注」那一刻的时间戳（主进程据此判断够没够 3 秒）
+  focusStop: (payload) => ipcRenderer.invoke('focus:stop', payload),
 });

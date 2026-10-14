@@ -381,6 +381,206 @@
     }
     #empty.hidden { display: none; }
     #empty .big { font-size: 30px; display: block; margin-bottom: 6px; }
+
+    /* ---------- 专注页（v3） ---------- */
+    /* 进专注页时，把「日程那一套」整体藏起来（header / 工具栏 / 表单 / 列表 / 周视图）。
+       用一个 body 上的类来切，比逐个元素 toggle 更不容易漏。 */
+    body.focus-mode header,
+    body.focus-mode .toolbar,
+    body.focus-mode #form,
+    body.focus-mode .list-wrap,
+    body.focus-mode #week { display: none; }
+
+    #focus-page {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 16px 18px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    #focus-page.hidden { display: none; }
+
+    .focus-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: none;
+    }
+    .focus-top h1 { font-size: 17px; }
+
+    .focus-card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      flex: none;
+    }
+    .focus-h {
+      margin: 0 0 4px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .focus-hint {
+      margin: 4px 0 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .focus-col + .focus-col { margin-top: 12px; }
+    .focus-col-head {
+      font-size: 12.5px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .focus-add {
+      display: flex;
+      gap: 8px;
+    }
+    .focus-add input {
+      flex: 1;
+      min-width: 0;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fff;
+      color: var(--text);
+    }
+    .focus-add input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, .13);
+    }
+    .focus-add button { flex: none; padding: 7px 12px; }
+
+    .focus-list {
+      list-style: none;
+      margin: 8px 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .focus-list:empty { display: none; }
+    .focus-list li {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #f9fafb;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      font-size: 13px;
+    }
+    .focus-list li .focus-val {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .focus-list li .focus-del {
+      flex: none;
+      padding: 1px 8px;
+      font-size: 14px;
+      line-height: 1.4;
+      border-radius: 6px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .focus-list li .focus-del:hover { border-color: var(--danger); color: var(--danger); }
+
+    #focus-error {
+      margin: 10px 0 0;
+      padding: 7px 10px;
+      font-size: 12.5px;
+      color: #b91c1c;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 7px;
+    }
+    #focus-error.hidden { display: none; }
+
+    .focus-presets {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .focus-presets button {
+      background: var(--card);
+      border: 1px solid var(--line);
+      color: var(--text);
+    }
+    .focus-presets button:hover { border-color: #cbd5e1; background: #f9fafb; }
+    .focus-presets button.on {
+      border-color: var(--primary);
+      background: #eff6ff;
+      color: var(--primary-dark);
+      font-weight: 600;
+    }
+
+    #focus-custom-row { margin-top: 10px; }
+    #focus-custom-row.hidden { display: none; }
+    #focus-custom-row input {
+      flex: 1;
+      min-width: 0;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 7px 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+    }
+
+    #focus-run { text-align: center; }
+    #focus-idle.hidden, #focus-running.hidden { display: none; }
+    .focus-start {
+      width: 100%;
+      padding: 12px 0;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .focus-ring-wrap {
+      position: relative;
+      width: 150px;
+      height: 150px;
+      margin: 4px auto 10px;
+    }
+    .focus-ring { width: 150px; height: 150px; transform: rotate(-90deg); }
+    .focus-ring .ring-bg { fill: none; stroke: #eef1f5; stroke-width: 9; }
+    .focus-ring .ring-fg {
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 9;
+      stroke-linecap: round;
+      transition: stroke-dashoffset .5s linear;
+    }
+    .focus-countdown {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 30px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .focus-stop {
+      width: 100%;
+      padding: 11px 0;
+      font-size: 14px;
+      user-select: none;
+    }
+    .focus-stop.holding {
+      background: #fef2f2;
+      border-color: var(--danger);
+    }
   </style>
 </head>
 <body>
@@ -393,6 +593,7 @@
     <button id="btn-add" class="primary">＋ 添加日程</button>
     <button id="btn-preview" class="ghost" title="立刻弹一次提醒，看看效果">预览提醒效果</button>
     <button id="btn-week" class="ghost" title="按周一到周日看看这一周的安排">周视图</button>
+    <button id="btn-focus" class="ghost" title="开始一段专注：挡住分心的网站和软件">专注</button>
   </div>
 
   <!-- 添加 / 编辑共用同一块表单，靠 editingId 区分 -->
@@ -464,6 +665,72 @@
   <div id="week" class="hidden">
     <div id="week-head"></div>
     <div id="week-grid"><div id="week-canvas"></div></div>
+  </div>
+
+  <!-- 专注页（v3）：不新建窗口，就在这个窗口里切一页。
+       三块：要挡住的东西 / 专注多久 / 开始 + 倒计时。 -->
+  <div id="focus-page" class="hidden">
+    <div class="focus-top">
+      <button id="btn-focus-back" class="ghost">← 返回日程</button>
+      <h1>专注</h1>
+    </div>
+
+    <!-- 1. 要挡住的东西 -->
+    <section class="focus-card">
+      <h2 class="focus-h">要挡住的东西</h2>
+      <p class="focus-hint">开始专注后，这些网站打不开、这些软件会被关掉。专注结束自动恢复。</p>
+
+      <div class="focus-col">
+        <div class="focus-col-head">网站</div>
+        <div class="focus-add">
+          <input id="f-domain-input" placeholder="比如 bilibili.com" autocomplete="off" />
+          <button id="btn-add-domain" class="primary" title="加进黑名单">＋</button>
+        </div>
+        <ul id="focus-domains" class="focus-list"></ul>
+      </div>
+
+      <div class="focus-col">
+        <div class="focus-col-head">软件</div>
+        <div class="focus-add">
+          <input id="f-exe-input" placeholder="比如 steam.exe" autocomplete="off" />
+          <button id="btn-add-exe" class="primary" title="加进黑名单">＋</button>
+        </div>
+        <ul id="focus-exes" class="focus-list"></ul>
+      </div>
+
+      <div id="focus-error" class="hidden"></div>
+    </section>
+
+    <!-- 2. 专注多久 -->
+    <section class="focus-card">
+      <h2 class="focus-h">专注多久</h2>
+      <p class="focus-hint">选一个时长，或者自己填一个。</p>
+      <div id="focus-presets" class="focus-presets"></div>
+      <div id="focus-custom-row" class="focus-add hidden">
+        <input id="f-custom-min" type="number" min="1" max="1440" placeholder="填多少分钟，比如 90" />
+        <button id="btn-custom-ok" class="ghost">用这个</button>
+      </div>
+    </section>
+
+    <!-- 3. 开始 / 倒计时 -->
+    <section class="focus-card" id="focus-run">
+      <div id="focus-idle">
+        <button id="btn-focus-start" class="primary focus-start">开始专注</button>
+        <p class="focus-hint" id="focus-idle-hint">开始后，大肥鱼会陪着你，中途想提前结束得长按 3 秒。</p>
+      </div>
+
+      <div id="focus-running" class="hidden">
+        <div class="focus-ring-wrap">
+          <svg class="focus-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="ring-bg" cx="60" cy="60" r="52"></circle>
+            <circle id="focus-ring-fg" class="ring-fg" cx="60" cy="60" r="52"></circle>
+          </svg>
+          <div id="focus-countdown" class="focus-countdown">25:00</div>
+        </div>
+        <button id="btn-focus-stop" class="danger focus-stop">长按 3 秒结束</button>
+        <p class="focus-hint" id="focus-stop-hint"></p>
+      </div>
+    </section>
   </div>
 
   <script src="./settings.js"></script>

@@ -36,6 +36,28 @@ const el = {
   btnWeek: document.getElementById('btn-week'),
   btnCancel: document.getElementById('btn-cancel'),
   btnSave: document.getElementById('btn-save'),
+  // 专注页（v3）
+  btnFocus: document.getElementById('btn-focus'),
+  focusPage: document.getElementById('focus-page'),
+  btnFocusBack: document.getElementById('btn-focus-back'),
+  fDomainInput: document.getElementById('f-domain-input'),
+  btnAddDomain: document.getElementById('btn-add-domain'),
+  focusDomains: document.getElementById('focus-domains'),
+  fExeInput: document.getElementById('f-exe-input'),
+  btnAddExe: document.getElementById('btn-add-exe'),
+  focusExes: document.getElementById('focus-exes'),
+  focusError: document.getElementById('focus-error'),
+  focusPresets: document.getElementById('focus-presets'),
+  focusCustomRow: document.getElementById('focus-custom-row'),
+  fCustomMin: document.getElementById('f-custom-min'),
+  btnCustomOk: document.getElementById('btn-custom-ok'),
+  focusIdle: document.getElementById('focus-idle'),
+  focusRunning: document.getElementById('focus-running'),
+  btnFocusStart: document.getElementById('btn-focus-start'),
+  btnFocusStop: document.getElementById('btn-focus-stop'),
+  focusCountdown: document.getElementById('focus-countdown'),
+  focusRingFg: document.getElementById('focus-ring-fg'),
+  focusStopHint: document.getElementById('focus-stop-hint'),
 };
 
 // 星期几的显示顺序按中文习惯：周一在前、周日在最后。
@@ -46,8 +68,16 @@ const REPEAT_LABEL = { once: '只一次', daily: '每天', weekdays: '工作日'
 let items = [];
 let editingId = null;    // null = 正在新增；否则是正在改的那条 id
 let pendingDelete = null; // 「删」要按两下才真删，这里记着第一下的状态
-let mode = 'list';        // 'list' | 'week'
+let mode = 'list';        // 'list' | 'week' | 'focus'
 let weekData = null;      // 最近一次从主进程拿到的周视图布局
+
+// ---- 专注页的状态（v3）----
+let focusData = null;      // 最近一次从主进程拿到的专注状态
+let draftDomains = [];     // 界面上的黑名单草稿（网站）—— 加一条就整份存回去
+let draftExes = [];        // 界面上的黑名单草稿（软件）
+let countdownTimer = null; // 专注中每秒刷新倒计时的定时器
+let holdTimer = null;      // 「长按结束」的计时器
+let holdStart = null;      // 「长按结束」按下那一刻
 
 // 每小时的像素高度。方块的位置和高度都由这个值乘出来 ——
 // 比例是主进程算的（week.js），像素才是界面的事。
@@ -259,16 +289,27 @@ async function loadWeek() {
 // 只负责「哪块显示、按钮上写什么」——窗口尺寸是主进程的事
 function applyMode() {
   const isWeek = mode === 'week';
+  const isFocus = mode === 'focus';
   el.week.classList.toggle('hidden', !isWeek);
-  el.listWrap.classList.toggle('hidden', isWeek);
+  el.listWrap.classList.toggle('hidden', isWeek || isFocus);
+  el.focusPage.classList.toggle('hidden', !isFocus);
+  // 专注页把「日程那一套」（header / 工具栏 / 表单 / 列表 / 周视图）整体藏起来，
+  // 用一个 body 上的类来切，比逐个元素 toggle 更不容易漏。
+  document.body.classList.toggle('focus-mode', isFocus);
   el.btnWeek.textContent = isWeek ? '列表' : '周视图';
 }
 
 async function setMode(next) {
-  mode = next === 'week' ? 'week' : 'list';
+  mode = (next === 'week' || next === 'focus') ? next : 'list';
   applyMode();
   await api.setMode(mode); // 主进程换窗口尺寸并重新摆位
   if (mode === 'week') await loadWeek();
+  if (mode === 'focus') {
+    await loadFocus();
+    startCountdown();
+  } else {
+    stopCountdown();
+  }
 }
 
 async function toggleMode() {
@@ -301,6 +342,270 @@ async function openFromBlank(dayKey, hour) {
   el.date.value = dayKey;
   syncRepeatRows();
   syncKindRows();
+}
+
+// ---------- 专注页（v3）----------
+//
+// 界面在这里只做两件事：把主进程给的状态画出来、把主人的操作递上去。
+// ⚠ 「哪条网址 / 程序名能加」「专注中能不能改配置」「能不能提前结束」——
+//   这些规则**全在主进程**，界面不许自己判（判了就会跟主进程不一致）。
+//   「长按 3 秒」这个时长也是主进程给的（focusData.holdMs），别在这里写死。
+
+// 毫秒 → 「MM:SS」（超过 1 小时就显示「H:MM:SS」）
+function fmtClock(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const p = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+}
+
+function showFocusError(msg) {
+  el.focusError.textContent = msg;
+  el.focusError.classList.remove('hidden');
+}
+function hideFocusError() {
+  el.focusError.classList.add('hidden');
+}
+
+// 画黑名单两栏。⚠ 一律 textContent —— 主人自己输的网址不能当 HTML 解析。
+function renderFocusLists() {
+  const build = (ul, arr, kind) => {
+    ul.textContent = '';
+    for (const value of arr) {
+      const li = document.createElement('li');
+      const span = document.createElement('span');
+      span.className = 'focus-val';
+      span.textContent = value;
+      const del = document.createElement('button');
+      del.className = 'focus-del';
+      del.textContent = '×';
+      del.title = '从名单里去掉';
+      del.addEventListener('click', () => removeFocusItem(kind, value));
+      li.append(span, del);
+      ul.appendChild(li);
+    }
+  };
+  build(el.focusDomains, draftDomains, 'domain');
+  build(el.focusExes, draftExes, 'exe');
+}
+
+// 预设按钮：25 / 45 / 60 / 自定义。选中的高亮，跟主进程的 lastMinutes 对上。
+function renderFocusPresets() {
+  const presets = (focusData && focusData.presets) || [25, 45, 60];
+  const last = focusData ? focusData.lastMinutes : 25;
+  el.focusPresets.textContent = '';
+  for (const m of presets) {
+    const b = document.createElement('button');
+    b.textContent = `${m} 分钟`;
+    b.dataset.minutes = String(m);
+    if (m === last) b.classList.add('on');
+    b.addEventListener('click', () => choosePreset(m));
+    el.focusPresets.appendChild(b);
+  }
+  const custom = document.createElement('button');
+  custom.textContent = '自定义';
+  custom.dataset.minutes = 'custom';
+  // 自定义时：如果当前值不在预设里，把「自定义」也点亮
+  if (!presets.includes(last)) custom.classList.add('on');
+  custom.addEventListener('click', () => {
+    el.focusCustomRow.classList.remove('hidden');
+    el.fCustomMin.value = presets.includes(last) ? '' : String(last);
+    el.fCustomMin.focus();
+  });
+  el.focusPresets.appendChild(custom);
+}
+
+// 画「开始 / 倒计时」那一块
+function renderFocusRun() {
+  const running = !!(focusData && focusData.running);
+  el.focusIdle.classList.toggle('hidden', running);
+  el.focusRunning.classList.toggle('hidden', !running);
+  if (running) refreshCountdownFrom(focusData);
+}
+
+// 用一份状态刷新倒计时数字 + 进度环
+function refreshCountdownFrom(data) {
+  if (!data || !data.session) return;
+  el.focusCountdown.textContent = fmtClock(data.remainingMs);
+
+  // 进度环：圆周长按半径算，dashoffset 越大环越空
+  const r = 52;
+  const C = 2 * Math.PI * r;
+  el.focusRingFg.style.strokeDasharray = String(C);
+  const ratio = Math.max(0, Math.min(1, data.progressRatio || 0));
+  el.focusRingFg.style.strokeDashoffset = String(C * ratio);
+}
+
+function renderFocus(data) {
+  focusData = data;
+  if (data) {
+    draftDomains = Array.isArray(data.domains) ? data.domains.slice() : [];
+    draftExes = Array.isArray(data.exes) ? data.exes.slice() : [];
+  }
+  renderFocusLists();
+  renderFocusPresets();
+  renderFocusRun();
+}
+
+async function loadFocus() {
+  const data = await api.focusGet();
+  renderFocus(data);
+}
+
+// 专注中每 1 秒问一次主进程「还剩多久」——倒计时以主进程为准，界面不自己减。
+// ⚠ 只在专注页可见时跑，切走就停（别在后台白耗电）。
+function startCountdown() {
+  stopCountdown();
+  countdownTimer = setInterval(async () => {
+    if (mode !== 'focus') { stopCountdown(); return; }
+    const data = await api.focusState();
+    focusData = data;
+    if (data && data.running) {
+      refreshCountdownFrom(data);
+    } else {
+      // 到点自动结束了 → 把界面切回「可以再开始」的样子
+      stopCountdown();
+      renderFocus(data);
+      toast('专注结束，休息一下吧～');
+    }
+  }, 1000);
+}
+
+function stopCountdown() {
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+}
+
+// ---- 黑名单增删 ----
+
+async function addFocusItem(kind) {
+  const input = kind === 'exe' ? el.fExeInput : el.fDomainInput;
+  const raw = input.value.trim();
+  if (!raw) return;
+
+  // 先问主进程「这条行不行」——立刻拿到人话原因，不用先写盘再回滚
+  const r = await api.focusNormalize(kind, raw);
+  if (!r || r.ok !== true) {
+    showFocusError((r && r.error) || '这条看着不太对');
+    return;
+  }
+
+  const next = kind === 'exe'
+    ? { domains: draftDomains, exes: [...draftExes, r.value] }
+    : { domains: [...draftDomains, r.value], exes: draftExes };
+
+  const res = await api.focusSetBlacklist(next);
+  if (!res || res.ok === false) {
+    showFocusError((res && res.error) || '没能保存，稍后再试');
+    return;
+  }
+
+  input.value = '';
+  hideFocusError();
+  focusData = Object.assign({}, focusData, { domains: res.domains, exes: res.exes });
+  draftDomains = res.domains.slice();
+  draftExes = res.exes.slice();
+  renderFocusLists();
+  toast('已加入名单');
+}
+
+async function removeFocusItem(kind, value) {
+  const next = kind === 'exe'
+    ? { domains: draftDomains, exes: draftExes.filter((v) => v !== value) }
+    : { domains: draftDomains.filter((v) => v !== value), exes: draftExes };
+
+  const res = await api.focusSetBlacklist(next);
+  if (!res || res.ok === false) {
+    showFocusError((res && res.error) || '没能去掉，稍后再试');
+    return;
+  }
+  hideFocusError();
+  focusData = Object.assign({}, focusData, { domains: res.domains, exes: res.exes });
+  draftDomains = res.domains.slice();
+  draftExes = res.exes.slice();
+  renderFocusLists();
+}
+
+// ---- 时长 ----
+
+async function choosePreset(minutes) {
+  const res = await api.focusSetPreset(minutes);
+  if (!res || res.ok === false) {
+    showFocusError((res && res.error) || '没能记住这个时长');
+    return;
+  }
+  hideFocusError();
+  if (focusData) focusData.lastMinutes = res.lastMinutes;
+  renderFocusPresets();
+}
+
+async function applyCustomMinutes() {
+  const n = Number(el.fCustomMin.value);
+  if (!Number.isInteger(n) || n <= 0) return showFocusError('请填一个大于 0 的整数分钟数');
+  await choosePreset(n);
+  el.focusCustomRow.classList.add('hidden');
+}
+
+// ---- 开始 / 结束 ----
+
+async function startFocus() {
+  const minutes = focusData ? focusData.lastMinutes : 25;
+  const res = await api.focusStart({ minutes });
+  if (!res || res.ok === false) {
+    showFocusError((res && res.error) || '开始失败');
+    return;
+  }
+  hideFocusError();
+  await loadFocus();
+  startCountdown();
+  toast('专注开始，我陪着你～');
+}
+
+async function finishStop() {
+  // 把「按下那一刻」报给主进程，由它判断够没够 3 秒（规则只有一处）
+  const pressedAt = holdStart;
+  endHold(true);
+  const res = await api.focusStop({ pressedAt });
+  if (!res || res.ok === false) {
+    showFocusError((res && res.error) || '还结束不了');
+    return;
+  }
+  hideFocusError();
+  stopCountdown();
+  await loadFocus();
+  toast('已结束专注，休息一下～');
+}
+
+// 长按：pointerdown 记时刻 → 每 100ms 看够没够 → 够了自动结束。
+// 中途松手 / 移开就取消（这就是「长按 3 秒」的界面实现）。
+function beginHold() {
+  if (holdStart) return;
+  if (focusData && focusData.running === false) return;
+  holdStart = Date.now();
+  el.btnFocusStop.classList.add('holding');
+  el.focusStopHint.textContent = '按住别松手…';
+
+  const need = (focusData && focusData.holdMs) || 3000;
+  holdTimer = setInterval(() => {
+    if (!holdStart) return;
+    const elapsed = Date.now() - holdStart;
+    if (elapsed >= need) {
+      finishStop();
+    } else {
+      el.focusStopHint.textContent = `按住别松手… 还差 ${((need - elapsed) / 1000).toFixed(1)} 秒`;
+    }
+  }, 100);
+}
+
+// 松手（cancel = true 表示「没按够就松了」，给一句提示）
+function endHold(completed) {
+  if (holdTimer) { clearInterval(holdTimer); holdTimer = null; }
+  const wasHolding = holdStart !== null;
+  holdStart = null;
+  el.btnFocusStop.classList.remove('holding');
+  if (!completed && wasHolding) el.focusStopHint.textContent = '松手太早啦，得按住 3 秒才行';
+  if (completed) el.focusStopHint.textContent = '';
 }
 
 // ---------- 单个日程的操作 ----------
@@ -437,17 +742,42 @@ el.repeat.addEventListener('change', syncRepeatRows);
 el.kind.addEventListener('change', syncKindRows);
 el.btnWeek.addEventListener('click', toggleMode);
 
+// ---- 专注页的事件 ----
+el.btnFocus.addEventListener('click', () => setMode('focus'));
+el.btnFocusBack.addEventListener('click', () => setMode('list'));
+el.btnAddDomain.addEventListener('click', () => addFocusItem('domain'));
+el.btnAddExe.addEventListener('click', () => addFocusItem('exe'));
+el.btnCustomOk.addEventListener('click', applyCustomMinutes);
+el.btnFocusStart.addEventListener('click', startFocus);
+
+// 回车 = 加一条（填网址 / 程序名时最顺手）
+for (const [input, kind] of [[el.fDomainInput, 'domain'], [el.fExeInput, 'exe']]) {
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addFocusItem(kind); }
+  });
+}
+el.fCustomMin.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); applyCustomMinutes(); }
+});
+
+// 长按 3 秒结束（别照抄「点一下就走」——那等于没有专注）
+el.btnFocusStop.addEventListener('pointerdown', (e) => { e.preventDefault(); beginHold(); });
+el.btnFocusStop.addEventListener('pointerup', () => endHold(false));
+el.btnFocusStop.addEventListener('pointerleave', () => endHold(false));
+el.btnFocusStop.addEventListener('pointercancel', () => endHold(false));
+
 // 主进程换完窗口尺寸后的回执。
 // 自己点按钮切的时候，这里拿到的和本地已经设好的一样 → 直接 return，避免重复渲染。
 // 但如果**主进程主动**切（比如托盘菜单、或截图工具），这里得负责把内容也画出来，
 // 否则会留下一个空空的周视图框。
 if (api.onMode) {
   api.onMode((m) => {
-    const next = m === 'week' ? 'week' : 'list';
+    const next = (m === 'week' || m === 'focus') ? m : 'list';
     if (next === mode) return;
     mode = next;
     applyMode();
     if (mode === 'week') loadWeek();
+    if (mode === 'focus') { loadFocus(); startCountdown(); } else { stopCountdown(); }
   });
 }
 
