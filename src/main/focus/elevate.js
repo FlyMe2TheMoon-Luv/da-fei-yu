@@ -257,9 +257,19 @@ function createElevator(overrides = {}) {
     }, paths());
   }
 
+  // 把计划落盘。真机上 startHelper 内部会做这件事；
+  // 单独拎出来是为了让**沙箱（自检）**也能写出同一份文件 ——
+  // 「主进程 → 助手」的唯一契约就是这个文件的序列化结果，
+  // 沙箱跳过它就等于没验这一步（exes 只有一项时会退化成字符串，是真踩过的坑）。
+  function writePlan(p) {
+    return deps.writeJson(PLAN_FILE, p);
+  }
+
   return {
     newSid,
     plan,
+    writePlan,
+    PLAN_FILE,
     paths,
     prepareHelper,
     startHelper,

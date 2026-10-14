@@ -154,6 +154,49 @@ function sanitizeBlacklist(raw) {
   return out;
 }
 
+// ── 最终交给提权助手的「要关掉的程序」名单（Task 8）──
+//
+// 为什么还要再算一次？
+//   界面已经拦过一次危险项了，`withDefaults` 读盘时也过了一次 ——
+//   但 focus.json 是磁盘上的普通文件，谁都能改（或者某个 bug 写坏了它）。
+//   助手拿到名单就**无条件照杀**，所以这里是**最后一道闸**：
+//   到了这一层，还要把保护进程筛掉一遍。
+//
+// 为什么不用 sanitizeBlacklist 顺手带过？
+//   那样「规则」就只有一套，看起来更省事；但这条链子的语义不同 ——
+//   sanitize 是「主人填的东西能不能收」，这里是「要动手杀了，最后一查」。
+//   两处独立写、并且用断言钉死口径一致（见 test 第 8 节最后一条），
+//   比「靠复用保证一致」更稳：将来谁改了 sanitize 的行为，这里不会跟着偷偷变。
+//
+// 输入可以是任何东西（null / 字符串 / 混着垃圾的数组）。永远返回数组，绝不抛异常。
+function killListOf(list) {
+  if (!Array.isArray(list)) return [];
+
+  const out = [];
+  const seen = new Set();
+
+  for (const item of list) {
+    // 先规范化（大小写、去路径、补 .exe）。垃圾项会在这里被拒。
+    const r = normalizeExe(item);
+    if (!r.ok) continue;
+
+    // ★ 再显式查一遍保护名单。
+    //   ⚠ 老实说：normalizeExe 内部**已经**查过了，所以这一行目前是**纯冗余** ——
+    //     把 `false &&` 加上去，所有自检照样全绿（试过了）。
+    //     留着它的理由不是「现在有用」，而是：这条链子的尽头是**助手无条件照杀**，
+    //     而 normalizeExe 的拒收行为属于「主人填的东西能不能收」（界面语义），
+    //     将来完全可能因为界面需求而放宽。到那时，这里是唯一还站着的一道闸。
+    //     所以它是「防将来」，不是「防现在」—— 别因为它现在测不出差异就删掉。
+    if (isProtectedExe(r.value)) continue;
+
+    if (seen.has(r.value)) continue;
+    seen.add(r.value);
+    out.push(r.value);
+  }
+
+  return out;
+}
+
 // ── 默认配置 ──
 const DEFAULT_CONFIG = {
   domains: [],
@@ -213,5 +256,6 @@ module.exports = {
   normalizeDomain,
   normalizeExe,
   sanitizeBlacklist,
+  killListOf,
   withDefaults,
 };

@@ -23,6 +23,7 @@
 //   只能等外部超时杀掉，现象是「跑了很久什么都没输出」，根本查不出哪儿错了。
 
 const fs = require('fs');
+const path = require('path');
 const hosts = require('./focus/hosts');
 
 module.exports = {
@@ -249,6 +250,89 @@ module.exports = {
         '★ hosts 和开始之前**逐字节相同**（主人原有内容一字不差）');
       ok(hosts.blockedDomains(hostsAfter || '').length === 0,
         '★ 没有任何残留的屏蔽域名');
+
+      // ===== ⑦c 禁软件：要关掉的程序真的进了计划文件吗（Task 8）=====
+      // 前面 ③b/⑦b 验的是「网站」那条链。这一段验「软件」那条链 ——
+      // 而它和网站那条链有个根本区别：**网站是改一个文件，软件是杀进程**。
+      // 杀错了不可逆（桌面没了、系统崩了），所以「交给助手的名单」必须被真的看一眼。
+      //
+      // 计划文件（focus-plan.json）是「主进程 → 助手」唯一的契约：
+      // 主进程把要关的程序写进去，助手读出来**无条件照杀**。
+      // 所以这里不看内存里的变量，直接读那个文件 —— 序列化错了也算数。
+      log('\n⑦c 禁软件：交给助手的名单（读真的计划文件）');
+      {
+        const planPath = focus.planPath();
+        const cfgPath = path.join(path.dirname(planPath), 'focus.json');
+        const readPlan = () => {
+          try { return JSON.parse(fs.readFileSync(planPath, 'utf8')); } catch { return null; }
+        };
+        const danger = ['electron.exe', 'explorer.exe', 'node.exe', 'csrss.exe', 'lsass.exe'];
+
+        // ---- 第一段：一份正常名单，应该原样进计划文件 ----
+        const set1 = focus.setBlacklist({ domains: ['example.com'], exes: ['notepad.exe', 'steam.exe'] });
+        ok(set1.ok === true, '设好黑名单（notepad.exe + steam.exe）');
+        const r1 = await focus.start({ minutes: 1 });
+        ok(r1.ok === true, '★ 专注开始成功', ` → ${r1.error || 'ok'}`);
+        await sleep(300);
+
+        const p1 = readPlan();
+        ok(!!p1, '★ 计划文件真的被写出来了（主进程和助手的唯一契约）',
+          ` → ${planPath}`);
+        ok(!!p1 && Array.isArray(p1.exes),
+          '★ 计划文件里的 exes 是**数组**（不是字符串 —— 助手侧就靠这个判断）',
+          p1 ? ` → ${JSON.stringify(p1.exes)}` : '');
+        ok(!!p1 && Array.isArray(p1.exes) && p1.exes.length === 2
+          && p1.exes.includes('notepad.exe') && p1.exes.includes('steam.exe'),
+          '★ 要关的两个程序都进了计划文件', p1 ? ` → ${JSON.stringify(p1.exes)}` : '');
+        ok(!!p1 && p1.mode === 'session', '★ mode 是 session（正常专注，不是一次性清理）',
+          p1 ? ` → ${p1.mode}` : '');
+        ok(!!p1 && p1.hostsPath === hostsPath,
+          '★ 计划文件里的 hosts 路径就是沙箱假文件（没指到系统真实 hosts）', true);
+
+        focus.stop('selftest-task8');
+        await sleep(400);
+
+        // ---- 第二段：★ 负对照 —— 直接手改 focus.json，塞进危险项 ----
+        // 这才是真正的威胁模型：界面会拒收，但 focus.json 就是磁盘上一个普通文件，
+        // 谁都能改（或者某个 bug 写坏了它）。所以这里**绕过界面**，直接把脏数据写进文件。
+        //
+        // 断言的是最终结果：**不管哪一道闸拦下的，到助手手里的名单里都没有危险项**。
+        // （目前 upstream 的 withDefaults 就会筛一遍，killListOf 是再加一道；
+        //   这里不假装能分辨是哪一道拦的 —— 要验的就是「结果安全」。）
+        log('   ★ 负对照：绕过界面，直接把 electron.exe / explorer.exe 写进 focus.json');
+        {
+          const dirty = {
+            domains: ['example.com'],
+            exes: ['notepad.exe', 'electron.exe', 'explorer.exe', 'node.exe', 'csrss.exe'],
+            presets: [25],
+            lastMinutes: 25,
+            session: null,
+          };
+          fs.writeFileSync(cfgPath, JSON.stringify(dirty, null, 2), 'utf8');
+          const onDisk = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+          ok(onDisk.exes.includes('electron.exe'),
+            '★ 脏数据确实写进磁盘了（负对照的前提成立，不是「没塞进去所以过了」）', true);
+
+          const r2 = await focus.start({ minutes: 1 });
+          ok(r2.ok === true, '★ 脏数据下专注照样能开始（不许因为一个坏条目就起不来）',
+            ` → ${r2.error || 'ok'}`);
+          await sleep(300);
+
+          const p2 = readPlan();
+          ok(!!p2 && Array.isArray(p2.exes) && p2.exes.length === 1 && p2.exes[0] === 'notepad.exe',
+            '★★ 计划文件里只剩 notepad.exe（危险项一个都没进）',
+            p2 ? ` → ${JSON.stringify(p2.exes)}` : '');
+          ok(!!p2 && Array.isArray(p2.exes) && !p2.exes.some((x) => danger.includes(x)),
+            '★★ 计划文件里没有任何「碰不得」的程序（助手拿到它就照杀，这是最后一道闸）', true);
+
+          focus.stop('selftest-task8');
+          await sleep(400);
+        }
+
+        focus.setBlacklist({ domains: [], exes: [] });
+        ok(focus.state().session === null, '这一段结束后没有残留会话');
+        ok(focus.state().exes.length === 0, '名单也清干净了');
+      }
 
       // ===== ⑧ 清理 =====
       log('\n⑧ 清理');

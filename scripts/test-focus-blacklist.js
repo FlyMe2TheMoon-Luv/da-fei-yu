@@ -191,6 +191,87 @@ section('6. withDefaults：文件坏 / 缺字段时回落默认值');
   okNeg(w6.session !== null && w6.session.sid === null, '★ 会话号不是字符串 → 退化成 null，不崩');
 }
 
+// ---------- 8. killListOf：真正要交给助手去关的名单（Task 8）----------
+// 这是「不许把自己杀了 / 不许把系统杀了」这条红线的守门员之一。
+//
+// ⚠ 一个必须说清的事实（不然这节的负对照是假的）：
+//   `killListOf` 里那句 `if (isProtectedExe(...)) continue` 目前是**纯冗余** ——
+//   `normalizeExe` 内部已经拒收保护进程了，所以把它注释掉，本节**照样全绿**（真的试过）。
+//   也就是说：本节能证明「危险项到不了助手手里」，但**证明不了是哪一道闸拦的**。
+//   这不是测试写坏了，是链子上确实有两道闸，而它们口径完全一致。
+//
+//   那为什么还留着这道冗余？因为它防的是**将来**：normalizeExe 的拒收规则属于
+//   「主人填的东西能不能收」（界面语义），将来可能因为界面需求放宽；
+//   而这条链子的尽头是助手**无条件照杀**。到那时这里是唯一还站着的闸。
+//   所以本节的价值是「钉住契约」（结果里永远没有危险项），不是「钉住某一行代码」。
+section('8. killListOf：交给助手的名单（最后一道闸）');
+{
+  // ① 正常：干净的名单原样过去
+  const k1 = bl.killListOf(['steam.exe', 'wechat.exe']);
+  ok(Array.isArray(k1), '返回的是数组');
+  ok(k1.length === 2 && k1.includes('steam.exe') && k1.includes('wechat.exe'), '正常名单原样通过');
+
+  // ★ 负对照：混进保护进程 → 必须只剩好人
+  const k2 = bl.killListOf(['steam.exe', 'electron.exe', 'explorer.exe']);
+  okNeg(k2.length === 1 && k2[0] === 'steam.exe',
+    '★ 混进 electron.exe / explorer.exe → 只剩 steam.exe（不许把自己和桌面杀了）',
+    ` → ${JSON.stringify(k2)}`);
+
+  // ★ 负对照：系统关键进程一个都不许漏
+  const allBad = ['csrss.exe', 'winlogon.exe', 'lsass.exe', 'services.exe',
+    'wininit.exe', 'smss.exe', 'dwm.exe', 'svchost.exe', 'explorer.exe'];
+  const k3 = bl.killListOf(allBad);
+  okNeg(k3.length === 0, '★ 全是系统关键进程 → 返回空数组（一个都不放行）',
+    ` → ${JSON.stringify(k3)}`);
+
+  // ★ 负对照：空 → 空
+  okNeg(bl.killListOf([]).length === 0, '★ 空名单 → 空（不能凭空造出东西）');
+
+  // ★ 大小写归一：绕过界面直接写 'STEAM.EXE' 也要能识别
+  const k4 = bl.killListOf(['STEAM.EXE']);
+  okNeg(k4.length === 1 && k4[0] === 'steam.exe',
+    '★ 大写也认（绕过界面写的脏数据要归一）', ` → ${JSON.stringify(k4)}`);
+
+  // ★ 负对照：'ELECTRON.EXE' 大写形态一样要拦住 ——
+  //   如果实现里只比对小写字符串、忘了先归一，这条会红。
+  okNeg(bl.killListOf(['ELECTRON.EXE']).length === 0, '★ 大写的 ELECTRON.EXE 也要拦住');
+
+  // ★ 负对照：'C:\path\to\electron.exe' 带路径形态也要拦住
+  okNeg(bl.killListOf(['C:\\Program Files\\Foo\\electron.exe']).length === 0,
+    '★ 带路径的 electron.exe 也要拦住（不能只看字符串开头）');
+
+  // 去重
+  const k5 = bl.killListOf(['steam.exe', 'STEAM.EXE', 'steam.exe']);
+  ok(k5.length === 1, '★ 重复项去重（别让助手白跑几遍）', ` → ${JSON.stringify(k5)}`);
+
+  // ★ 负对照：坏输入不许抛异常（focus.json 被改坏时桌宠不能起不来）
+  okNeg(bl.killListOf(null).length === 0, '★ null → 空数组，不崩');
+  okNeg(bl.killListOf(undefined).length === 0, '★ undefined → 空数组，不崩');
+  okNeg(bl.killListOf('steam.exe').length === 0, '★ 传字符串（不是数组）→ 空数组，不崩');
+  okNeg(bl.killListOf([null, 123, '', '  ', {}]).length === 0,
+    '★ 数组里全是垃圾 → 空数组，不崩');
+
+  // 垃圾和好货混在一起 → 只留好货
+  const k6 = bl.killListOf([null, 'steam.exe', '', 'electron.exe', 42, 'wechat.exe']);
+  ok(k6.length === 2 && k6.includes('steam.exe') && k6.includes('wechat.exe'),
+    '★ 垃圾混好货 → 只留两个好货', ` → ${JSON.stringify(k6)}`);
+
+  // ★★ 最强的一条：killListOf 的结果必须**恒等于**「逐项过 isProtectedExe 之后剩下的」。
+  //    这是防「两套规则各写一遍、慢慢长歪」—— 比如 killListOf 里漏抄了某个保护项，
+  //    或者手写了一个不同的判断，这条会红。
+  const sample = ['steam.exe', 'electron.exe', 'wechat.exe', 'node.exe', 'explorer.exe',
+    'notepad.exe', 'svchost.exe', 'dingtalk.exe'];
+  const expected = sample.filter((x) => !bl.isProtectedExe(x));
+  const actual = bl.killListOf(sample);
+  okNeg(JSON.stringify(actual) === JSON.stringify(expected),
+    '★★ killListOf 与 isProtectedExe 口径完全一致（防两套规则长歪）',
+    ` → 实际 ${JSON.stringify(actual)} / 期望 ${JSON.stringify(expected)}`);
+
+  // ★ 负对照：好人不许被误拦 —— 防「一律返回空数组」这种假实现
+  okNeg(bl.killListOf(['steam.exe', 'wechat.exe', 'notepad.exe', 'chrome.exe']).length === 4,
+    '★ 好人不许被误拦（防「一律清空」的假实现）');
+}
+
 // ---------- 汇总 ----------
 console.log(`\n负对照：${negPass}/${negTotal} 通过`);
 console.log(`===== 结果：${pass} 通过 / ${fail} 失败 =====`);

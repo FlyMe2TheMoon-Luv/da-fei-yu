@@ -356,6 +356,113 @@ section('6. restore 模式：只写一次干净内容就退出，绝不备份、
   }
 }
 
+// ---------- 7. ★ 负对照：助手自己的保护名单真的会跳过危险程序（Task 8）----------
+// 这是「把自己杀了 / 把系统杀了」这条红线的**最后一道闸**。
+//
+// 为什么以前没法验、现在能验了：
+//   要证明「保护名单生效」，最直接的办法是让名单里出现 explorer.exe，看它会不会被杀。
+//   ——但这正是我们不能做的事：万一保护名单坏了，桌面当场就没了。
+//   所以给助手加了一个 dryRun：**只记日志、不动手**。
+//   于是「会不会杀」变成了「日志里写了什么」，既安全又能验。
+//
+// ⚠ 真机上 elevate.js 永远不会写 dryRun 这个字段（makePlan 里根本没有它）。
+//   它只为自检存在 —— 这一点在脚本里也写了注释。
+section('7. ★ 负对照：助手自己的保护名单（dryRun：只记不动手）');
+{
+  // 挑几个「万一真被杀就出事」的名字 + 一个不存在但也不受保护的靶子。
+  // ★ 靶子用不存在的进程名：就算保护名单完全失效，也杀不到任何真东西。
+  const GUARDED = ['explorer.exe', 'csrss.exe', 'lsass.exe', 'svchost.exe', 'electron.exe', 'node.exe'];
+  const BOGUS = 'zzz-focus-selftest-bogus.exe';
+
+  const s = makeSandbox({
+    endsAtOffsetMs: 6000,
+    exes: GUARDED.concat([BOGUS]),
+    planOverrides: { dryRun: true },
+  });
+
+  try {
+    const exitP = runHelper(s.planPath);
+    await waitFor(() => readBytes(s.p.hostsPath).includes(Buffer.from(hosts.BEGIN_MARK, 'latin1')), 20000, 'hosts 被写入');
+
+    // ⚠ 先等「循环真的跑过一轮」的证据（心跳），再去查日志。
+    //   反过来的话，保护名单一旦失效就是「等日志超时」——
+    //   红是红了，但红得很难看、也说不清哪一条错了（第一版就是这样）。
+    //   心跳 = 循环第 d 步，跳过记录 = 第 c 步，所以心跳出现时日志一定已经写过。
+    await waitFor(() => {
+      const hb = readJsonOrNull(s.p.hbPath);
+      return hb && hb.sid === 'test-sid' && hb.at > 0;
+    }, 20000, '心跳文件（证明循环跑起来了）');
+
+    const log = fs.existsSync(s.p.logPath) ? fs.readFileSync(s.p.logPath, 'utf8') : '';
+
+    // ① 每一个危险名字都必须被跳过
+    for (const g of GUARDED) {
+      const base = g.replace(/\.exe$/, '');
+      okNeg(new RegExp(`skipped \\(guard\\): ${g.replace('.', '\\.')}`, 'i').test(log),
+        `★ ${g} 被保护名单拦下（没动手）`);
+    }
+
+    // ② ★★ 最强的一条：整份日志里**一次都不能出现真的杀进程记录**。
+    //    dryRun 下只许出现 "would kill"；出现 "killed " 就说明 dryRun 被绕过了。
+    okNeg(/(^|\s)killed\s/i.test(log) === false,
+      '★★ 日志里没有任何「真杀」记录（dryRun 下只许有 would kill）');
+
+    // ②b ★★ 保护名单里的名字，连「打算动手」都不许有。
+    //     只看 "killed" 是不够的：dryRun 下保护失效会记成 "would kill"，
+    //     上面那条照样是绿的。这一条才真的把「名单失效」钉死。
+    const wouldKillGuarded = GUARDED.filter((g) => {
+      const base = g.replace(/\.exe$/, '');
+      return new RegExp(`would kill ${g.replace('.', '\\.')}\\b`, 'i').test(log)
+        || new RegExp(`would kill ${base}\\b`, 'i').test(log);
+    });
+    okNeg(wouldKillGuarded.length === 0,
+      '★★ 保护名单里的程序连「打算关掉」都没出现过',
+      ` → ${JSON.stringify(wouldKillGuarded)}`);
+
+    // ③ 负对照的另一半：助手确实起来了、确实进了循环 ——
+    //    否则「什么都没杀」也可能是因为它压根没跑，上面的断言就是假的。
+    ok(/helper started/.test(log), '助手确实起来了（不是「什么都没发生」）');
+    const hb = readJsonOrNull(s.p.hbPath);
+    ok(!!hb && hb.sid === 'test-sid', '★ 心跳写了 —— 证明它真的进了轮询循环，不是启动失败');
+
+    const code = await exitP;
+    ok(code === 0, '到点自己收工退出');
+
+    // ④ 收尾之后日志里依然没有真杀记录（整段生命周期都没杀过东西）
+    const log2 = fs.existsSync(s.p.logPath) ? fs.readFileSync(s.p.logPath, 'utf8') : '';
+    okNeg(/(^|\s)killed\s/i.test(log2) === false, '★ 整个生命周期都没有真杀过进程');
+  } finally {
+    cleanup(s.dir);
+  }
+
+  // ★ 负对照：保护名单必须真的「认识」这些名字 —— 用 base name（不带 .exe）也要拦。
+  //   计划文件里 exes 的形态是 JS 侧给的（带 .exe），但万一有人给了裸名字，
+  //   助手也得分得清。这一条用 dryRun 验「裸名字 explorer 一样被跳过」。
+  {
+    const s2 = makeSandbox({
+      endsAtOffsetMs: 5000,
+      exes: ['explorer', 'lsass'],
+      planOverrides: { dryRun: true },
+    });
+    try {
+      const exitP = runHelper(s2.planPath);
+      // 同样先等「循环跑过了」的证据，再去查日志（理由见上一段）
+      await waitFor(() => {
+        const hb = readJsonOrNull(s2.p.hbPath);
+        return hb && hb.sid === 'test-sid' && hb.at > 0;
+      }, 20000, '心跳文件（证明循环跑起来了）');
+      const log = fs.existsSync(s2.p.logPath) ? fs.readFileSync(s2.p.logPath, 'utf8') : '';
+      okNeg(/skipped \(guard\): explorer/i.test(log), '★ 裸名字「explorer」（不带 .exe）也一样被拦');
+      okNeg(/skipped \(guard\): lsass/i.test(log), '★ 裸名字「lsass」也一样被拦');
+      okNeg(/(^|\s)killed\s/i.test(log) === false, '★ 依然没有任何真杀记录');
+      okNeg(/would kill (explorer|lsass)\b/i.test(log) === false,
+        '★ 裸名字也没被「打算关掉」过');
+      fs.writeFileSync(s2.p.ctlPath, JSON.stringify({ sid: 'test-sid', stop: true, at: Date.now() }), 'utf8');
+      await exitP;
+    } finally { cleanup(s2.dir); }
+  }
+}
+
 // ---------- 汇总 ----------
 console.log(`\n负对照：${negPass}/${negTotal} 通过`);
 console.log(`===== 结果：${pass} 通过 / ${fail} 失败 =====`);

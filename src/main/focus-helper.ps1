@@ -143,6 +143,14 @@ $script:RestoreText = $plan.restoreText
 $sid = [string]$plan.sid
 $exes = @($plan.exes)
 
+# Dry run: log what WOULD be closed instead of closing it. The real app never
+# sets this (elevate.js never writes the key), it exists so the self test can
+# prove the guard list below actually skips protected processes -- without
+# killing anything on the machine that is running the test.
+$dryRun = ($plan.dryRun -eq $true)
+# Guard skips are logged once per name (the loop runs every 3s, no need to spam).
+$script:SkipLogged = @{}
+
 $endsAt = 0
 try { $endsAt = [int64]$plan.endsAt } catch { $endsAt = 0 }
 
@@ -262,11 +270,25 @@ while ($true) {
     $base = $name
     if ($base.EndsWith('.exe')) { $base = $base.Substring(0, $base.Length - 4) }
     if ($base -eq '') { continue }
-    if ($guard -contains $base) { continue }
+
+    if ($guard -contains $base) {
+      # Log it once, so a dirty plan file is visible in the log instead of
+      # silently ignored. Never actually touched.
+      if (-not $script:SkipLogged.ContainsKey($base)) {
+        $script:SkipLogged[$base] = $true
+        Write-Log ('skipped (guard): ' + $name)
+      }
+      continue
+    }
 
     # -Name with a literal process name: no string building, no surprises.
     $procs = @(Get-Process -Name $base -ErrorAction SilentlyContinue)
     foreach ($p in $procs) {
+      if ($dryRun) {
+        $killed = $killed + 1
+        Write-Log ('would kill ' + $name + ' pid=' + $p.Id)
+        continue
+      }
       try {
         Stop-Process -Id $p.Id -Force -ErrorAction Stop
         $killed = $killed + 1

@@ -29,7 +29,7 @@ const timer = require('./timer');
 const hosts = require('./hosts');
 const doh = require('./doh');
 const intercept = require('./intercept');
-const { sanitizeBlacklist } = require('./blacklist');
+const { sanitizeBlacklist, killListOf } = require('./blacklist');
 
 // ⚠ 拿到的是**模块**，要 createElevator() 才是能用的实例 ——
 //   require('./elevate') 本身只有工厂和纯函数，没有 startHelper / notifyStop。
@@ -206,11 +206,14 @@ async function start({ minutes } = {}) {
   session.sid = elevator.newSid();
 
   // ③ 算好「要写进去的全文」和「还原用的全文」—— 全在纯函数里做，助手只负责照抄。
+  //    ★ exes 这里要过 killListOf：助手拿到名单是**无条件照杀**的，
+  //      所以必须在交给它之前把保护进程筛掉（界面拦过一道、读盘拦过一道，
+  //      这是第三道，也是真正动手前的那一道）。
   const plan = intercept.buildPlan({
     session,
     originalText: original,
     domains: cfg.domains,
-    exes: cfg.exes,
+    exes: killListOf(cfg.exes),
     paths: planPaths(),
     now: Date.now(),
   });
@@ -230,6 +233,13 @@ async function start({ minutes } = {}) {
     // 沙箱（自检）：不走提权，直接改假文件 —— 走的是**同一套文本逻辑**，
     // 只是省掉了 UAC 那一步。这样自检能验完整条链，又不会弹窗、不会碰真文件。
     try {
+      // ★ 计划文件照样要写。
+      //   真机上「主进程 → 助手」就是靠这个文件传话的，它是两边唯一的契约；
+      //   沙箱里跳过它就等于跳过了「序列化这一步对不对」。
+      //   而序列化真出过事：exes 只有一项时，PowerShell 读出来是个字符串不是数组
+      //   （助手侧 `if ($exes -is [string])` 就是为它加的）。
+      //   所以这里连内容一起写下去，自检就能真的读到、真的检查。
+      elevator.writePlan(plan);
       intercept.writeHostsText(options.hostsPath, plan.hostsText);
     } catch (err) {
       return { ok: false, error: `写 hosts 失败：${err && err.message}`, doh: dohInfo };
@@ -473,4 +483,7 @@ module.exports = {
   cleanupResidue,
   recoverIfDirty,
   hostsPath: () => options.hostsPath,
+  // 计划文件的真实路径（沙箱里也在 userData 下）。
+  // 给自检用：它是「主进程 → 助手」唯一的契约，值得被真的读出来看一眼。
+  planPath: () => elevator.paths().planPath,
 };
