@@ -10,9 +10,23 @@
   阶段 2 之后又按主人反馈做了三处小修（设置窗口摆位 / 按钮更显眼 / 桌宠不抢焦点），也已完成。
   另加了「桌面双击快捷方式」（主人不依赖小安也能开关桌宠），也已完成。
   **v2（周视图 + 聊天）也已完成**（2026-10-13，14 个 Task，全量回归全绿）。
-  **下一步：阶段 3 专注模式（禁网站 / 禁软件）** —— 细节已对齐，但有 4 个点待主人拍板
-  （范围 / DoH 对策 / 禁软件方案 / 触发方式），详见 `HANDOFF-V3.md` 第三节 3.5。
-  拍板后再写 `PLAN-V3-专注模式.md` 开工。（2026-10-12 主人曾说过「先不做禁网站」，现已回头推进。）
+  **下一步：阶段 3 专注模式**（设计已拍板，见 `PLAN-V3-专注模式.md`，10 个 Task）。
+  **进度：Task 1–6 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
+  宠物陪伴 / 提权壳+常驻助手）。**下一步 Task 7 禁网站落地**。
+- **阶段 3 专注模式的关键约定**（别改错）：
+  - 拦截分两段：**改 hosts 挡网站** + **轮询杀进程挡软件**。整段专注**只弹一次 UAC** ——
+    起一个**常驻提权助手**（`src/main/focus-helper.ps1`，**纯 ASCII**），从写 hosts 活到结束。
+  - **结束走控制文件，绝不杀助手进程**（强杀它就没机会还原 hosts，网站会一直打不开）。
+    助手还有**到点自愈**兜底：主进程崩了，它到点自己还原。
+  - **控制文件 `focus-ctl.json`（只主进程写）和心跳 `focus-hb.json`（只助手写）必须分开** ——
+    同一个文件会互相覆盖，导致专注结束不了。
+  - **hosts 一律用 latin1（代码页 28591）读写**，做到**逐字节往返**（`hosts.js` 的承诺是
+    「删完 == 原文逐字节相等」，GBK/UTF-8 中文注释都不能被改）。助手侧用 `GetEncoding(28591)`。
+  - **黑名单双重排除**自身与系统进程：JS 侧 `isProtectedExe` + 助手侧硬编码 guard 名单。
+  - 提权壳 `src/main/focus/elevate.js`：碰 electron 的依赖**延迟 require**，所以能脱离 Electron 单测；
+    实例要 `createElevator()` 拿，**`require` 回来的是模块不是实例**（踩过这个坑）。
+  - **不提权也能验拦截**：给助手一份**假 hosts 副本**（临时目录），它只认计划文件里的路径，
+    所以 `test:focus-helper` 全程不提权、不碰真实文件就能验完「备份/写入/还原/自愈」。
 - **v2 四条已拍板**：聊天**本地规则 + 云端 AI 两套都做**（没网退回本地）/ 周视图上**点方块弹表单**改 /
   聊天框是**贴着桌宠的小气泡条** / 周视图**不翻页**（固定周一到周日）。
 - **v2 新架构约定**（别改错）：布局数学放主进程 `src/main/week.js`（纯函数、Node 可单测），
@@ -46,10 +60,14 @@
 - 目录约定：`src/main`（主进程，碰系统）、`src/renderer`（界面，不碰系统）、`src/assets`（静态图片）、`scripts/`（开发工具）。
 - 开发工具：`npm run shot`（截图验收）/ `check-assets`（验图片真透明）/ `make-tray-icon` / `sync-vendor` /
   `make-launcher`（生成桌面双击快捷方式 + 图标）/
-  `test:schedules`（46）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
-  `test:exit`（6）/ `test:gaze`（6）/ `test:drag` / `test:focus`（20）/ `test:quit`（8）/
-  `test:sync`（10，按钮与桌宠同步）/
-  `test:reminder-e2e`（19）/ `test:scheduler-e2e` / `test:settings-e2e`（45）。
+  **纯 Node 自检**：`test:schedules`（63）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
+  `test:quit`（8）/ `test:week`（53）/ `test:nl-time`（23）/ `test:brain-local`（19）/ `test:brain-cloud`（18）/
+  `test:brain-router`（19）/ `test:focus-blacklist`（60）/ `test:focus-timer`（34）/ `test:focus-hosts`（42）/
+  `test:focus-elevate`（81）/ `test:focus-helper`（27，**真跑 .ps1，不提权**）/
+  **Electron 端到端**：`test:settings-e2e`（105）/ `test:focusmode-e2e`（24）/ `test:reminder-e2e`（19）/
+  `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
+  `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。
+  ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），批量统计要用 `grep -E "(结果|结束)："`。
 - 阶段 2 已拍板：**提醒气泡用独立小窗口**（贴宠物旁，可放按钮）；**错过 5 分钟内补、超过不补**。
 - **界面控件约定**：往桌宠界面加任何 DOM 控件（按钮等）**必须挂 `data-ui` 属性**，
   否则穿透判定（只读 WebGL 像素）会把它当空白区域，控件**静默点不到**（HANDOFF 坑 21）。
@@ -83,6 +101,10 @@
   - 日程调度用轮询不用 setTimeout。
   - 改 hosts 必须用 BEGIN/END 标记块，绝不整文件覆盖。
   - 提权只在开始专注时弹一次 UAC，不常驻管理员。
+- **改了「谁 require 谁」这类接线，纯函数自检永远是绿的，必须跑端到端** ——
+  Task 6 里 `require('./elevate')` 当成实例用，纯函数自检全绿，是端到端抓到的。
+- **自检崩了也必须打印结论**：整段包 `try/catch`，catch 里 `fail++` 并打印
+  「自检自身抛异常」+ 负对照计数 + 结果行。卡死过一次（Task 5），别再来第二次。
 
 ## 协作方式
 - 用户是 AI 小白，讲人话、少术语、多举例。
