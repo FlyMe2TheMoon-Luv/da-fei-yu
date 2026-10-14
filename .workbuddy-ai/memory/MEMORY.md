@@ -11,8 +11,10 @@
   另加了「桌面双击快捷方式」（主人不依赖小安也能开关桌宠），也已完成。
   **v2（周视图 + 聊天）也已完成**（2026-10-13，14 个 Task，全量回归全绿）。
   **下一步：阶段 3 专注模式**（设计已拍板，见 `PLAN-V3-专注模式.md`，10 个 Task）。
-  **进度：Task 1–7 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
-  宠物陪伴 / 提权壳+常驻助手 / 禁网站落地）。**下一步 Task 8 禁软件落地**。
+  **进度：Task 1–8 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
+  宠物陪伴 / 提权壳+常驻助手 / 禁网站落地 / 禁软件落地）。**下一步 Task 9 拦截提示窗口**。
+  ⚠ Task 6–8 是「动系统」的部分，**代码和自检都完成了，但真机验收还没做**
+  （UAC 弹窗、网站真打不开、记事本真被关 —— 这三件事沙箱里验不了，只能主人点）。
 - **阶段 3 专注模式的关键约定**（别改错）：
   - 拦截分两段：**改 hosts 挡网站** + **轮询杀进程挡软件**。整段专注**只弹一次 UAC** ——
     起一个**常驻提权助手**（`src/main/focus-helper.ps1`，**纯 ASCII**），从写 hosts 活到结束。
@@ -29,6 +31,13 @@
     因为 `Buffer.from(s,'latin1')` 会把汉字截成任意字节，其中可能有 `0x0D`，
     还原时凭空多一个换行，把「逐字节相同」搞坏（真抓到过）。
   - **黑名单双重排除**自身与系统进程：JS 侧 `isProtectedExe` + 助手侧硬编码 guard 名单。
+    ★ `killListOf()` 是交给助手前的最后一遍过滤。但它那句 `isProtectedExe` **目前是纯冗余**
+    （`normalizeExe` 已拒收），注释掉自检照样全绿 —— 留着是防「将来 normalizeExe 放宽」。
+  - **助手有 `dryRun`**（只记 "would kill"、不动手）：真机永不写这个字段，
+    只为自检存在 —— 否则「验证保护名单生效」就得拿 explorer.exe 去试，桌面会没。
+    ★ 思路可推广：验证手段本身是危险操作时，先把它变成「只记录、不动手」。
+  - **写完负对照要问「这条到底怎样才能红」**。答不上来的就是装饰
+    （`killListOf` 第一版负对照就是这种，等于没写）。
   - 提权壳 `src/main/focus/elevate.js`：碰 electron 的依赖**延迟 require**，所以能脱离 Electron 单测；
     实例要 `createElevator()` 拿，**`require` 回来的是模块不是实例**（踩过这个坑）。
   - **不提权也能验拦截**：给助手一份**假 hosts 副本**（临时目录），它只认计划文件里的路径，
@@ -75,9 +84,9 @@
   `make-launcher`（生成桌面双击快捷方式 + 图标）/
   **纯 Node 自检**：`test:schedules`（63）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
   `test:quit`（8）/ `test:week`（53）/ `test:nl-time`（23）/ `test:brain-local`（19）/ `test:brain-cloud`（18）/
-  `test:brain-router`（19）/ `test:focus-blacklist`（60）/ `test:focus-timer`（34）/ `test:focus-hosts`（94）/
-  `test:focus-elevate`（81）/ `test:focus-helper`（35，**真跑 .ps1，不提权**）/ `test:focus-intercept`（47）/
-  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（34）/ `test:reminder-e2e`（19）/
+  `test:brain-router`（19）/ `test:focus-blacklist`（76）/ `test:focus-timer`（34）/ `test:focus-hosts`（94）/
+  `test:focus-elevate`（81）/ `test:focus-helper`（51，**真跑 .ps1，不提权**）/ `test:focus-intercept`（47）/
+  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（47）/ `test:reminder-e2e`（19）/
   `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
   `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。
   ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），批量统计要用 `grep -E "(结果|结束)："`。
