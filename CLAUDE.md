@@ -2,7 +2,7 @@
 
 > 这份文件是给 AI（Claude / WorkBuddy 等）看的项目说明书。
 > **动手写代码前先读它。** 它决定了后续实现会不会跑偏。
-> 最后更新：2026-10-12（阶段 2 全部完成 + 主人反馈的三处小修 + 桌面双击快捷方式）
+> 最后更新：2026-10-14（阶段 3 专注模式 Task 1–9 完成 · 自检全绿 · 就差主人真机验收）
 
 ---
 
@@ -13,7 +13,8 @@
 1. **日程提醒** —— 按输入的日程安排到点提醒
 2. **专注模式** —— 在该模式下禁用用户预设的网站或软件
 
-完整方案见 `PLAN.md`；项目状态与下一步见 `HANDOFF.md`（历史调研归档在 `HANDOFF-ARCHIVE.md`）。
+完整方案见 `PLAN.md`；**当前状态与下一步见 `HANDOFF-V3.md`**（阶段 0–2 全过程见 `HANDOFF.md`，
+历史调研归档在 `HANDOFF-ARCHIVE.md`，阶段 3 的 Task 拆解见 `PLAN-V3-专注模式.md`）。
 
 ---
 
@@ -55,7 +56,23 @@ desktop-pet/
 │  │  ├─ reminder.js      提醒呈现：气泡窗口 + 桌宠表演 + 系统通知兜底（阶段 2-3）
 │  │  ├─ settings-window.js 日程管理窗口：加 / 改 / 删日程（阶段 2-4）
 │  │  ├─ place.js         纯函数：把小窗口摆在桌宠旁边（**刻意不 require electron**，好单测）
+│  │  ├─ week.js          周视图布局纯函数（v2）
+│  │  ├─ nl-time.js       中文大白话 → 时间/日程解析（v2）
+│  │  ├─ brain/           聊天大脑（v2）：local.js / cloud.js / index.js（路由）
+│  │  ├─ chat-window.js   聊天条窗口（v2，focusable:true）
+│  │  ├─ ai-config.js     云端 AI 配置存取（Key 只存 userData，界面只见掩码）
+│  │  ├─ focus-notice.js  专注·拦截提示窗口（Task 9，**focusable:true**，和气泡相反）
+│  │  ├─ preload-notice.js ← 拦截提示窗口的安全桥梁
+│  │  ├─ focus-helper.ps1 ← 提权常驻助手（**纯 ASCII**）：备份/写 hosts/杀进程/还原
+│  │  ├─ selftest-focusmode.js ← 专注模式端到端自检（--selftest=focusmode）
 │  │  └─ focus/           专注模式（阶段 3）
+│  │     ├─ index.js      主控：配置 + 会话 + 编排（require electron，别拿它单测）
+│  │     ├─ blacklist.js  黑名单校验 + killListOf（纯函数）
+│  │     ├─ timer.js      计时状态机 + 长按 3 秒规则（纯函数）
+│  │     ├─ hosts.js      hosts 文本增删改（纯函数，绝不 fs）
+│  │     ├─ intercept.js  系统薄壳：读/写 hosts、算块、组装计划
+│  │     ├─ doh.js        安全 DNS（DoH）检测（纯函数探测层，可注入）
+│  │     └─ elevate.js    提权壳 + 计划文件（碰 electron 的依赖延迟 require，可单测）
 │  ├─ renderer/           ← 界面：浏览器世界，碰不到系统
 │  │  ├─ pet/             桌宠本体
 │  │  │  ├─ index.html
@@ -106,8 +123,8 @@ desktop-pet/
 | 0 | 环境准备（项目骨架 + CLAUDE.md） | ✅ 已完成 |
 | 1 | 桌宠外壳（透明窗口、拖拽、穿透、托盘、位置记忆、Live2D 形象） | ✅ 已完成 |
 | 2 | 日程提醒 | ✅ 已完成（2-1 数据层 · 2-2 调度引擎 · 2-3 提醒呈现 · 2-4 编辑入口） |
-| 3 | 专注模式 | ⬜ **下一步** |
-| 4 | 设置界面 | ⬜ 未开始 |
+| 3 | 专注模式 | ✅ 代码+自检完成（Task 1–9）· ⚠ 真机验收待做 |
+| 4 | 设置界面 | ✅ 已完成（`settings-window.js`，含专注页） |
 | 5 | 打包发布 | ⬜ 未开始 |
 
 **第一周目标：一只会拖、会提醒的猫。先让它活着，再让它管你。**
@@ -247,6 +264,35 @@ desktop-pet/
     聊天条 `focusable: true`（和气泡相反）；聊天文本一律 `textContent`；
     API Key 只存 `userData/ai-config.json`，界面只拿掩码，日志绝不出现明文。
 
+### 专注模式相关的坑（阶段 3 · 2026-10-14 实测）
+
+37. **`test:focus` 是「窗口焦点」自检，专注模式的测试叫 `test:focusmode-*`** ——
+    名字撞了会跑错套件（`--selftest=focus` 早被占用，专注模式用 `--selftest=focusmode`）。
+38. **改 hosts 只用标记块增删、保留行尾、用 latin1 读写** ——
+    绝不整文件覆盖（会搞坏主人原有 DNS 配置）；行尾不保留会「逐字节比对」失败；
+    latin1 保证 GBK/UTF-8 中文注释逐字节不变。`hosts.js` 是纯函数，已测透。
+39. **提权助手常驻整段专注，结束走控制文件，不是杀进程** ——
+    强杀助手 = 它没机会还原 hosts，网站会一直打不开。助手另有**到点自愈**兜底。
+    控制文件 `focus-ctl.json`（只主进程写）和心跳 `focus-hb.json`（只助手写）**必须分开**，
+    同一文件两个写入者会互相覆盖 → 专注结束不了。
+40. **`.ps1` / `.bat` / `.vbs` 一律纯 ASCII，一个中文都不能有**（`.ps1` 也不例外）——
+    解释器按系统 ANSI（GBK）读，UTF-8 中文会乱码并带崩后面几行。
+    `focus-helper.ps1` 全文 0 个非 ASCII 字符（自检会验）。
+41. **DoH（安全 DNS）开着会让 hosts 屏蔽整个失效** —— 开始专注前必须检测并提示；
+    但**只在确认 `'on'` 时弹窗**（`'unknown'` 是真机常态，每次都弹会训练主人闭眼点掉，
+    被闭眼点掉的警告比没警告更坏）。`doh.shouldPopupForDoh()` 就是这条策略。
+42. **黑名单双重排除自身与系统进程**（JS 侧 `killListOf()` + 助手侧硬编码 guard 名单）——
+    链子尽头是助手「无条件照杀」，所以每一道都要挡。清理残留要用 `mode:'restore'`
+    （不能拿 `session` 模式清残留，那会把脏文件当原文件备份）。
+43. **验证手段本身是危险操作时，先把它变成「只记录、不动手」** ——
+    助手加了 `dryRun`（只记 `would kill`），于是「保护名单生效」这条以前没法验的闸，
+    现在能在**不杀任何进程**的前提下验掉。思路可推广。
+44. **写完负对照要问一句「这条到底怎样才能红」** —— 答不上来的就是装饰
+    （`killListOf` 里那句 `isProtectedExe` 目前纯冗余、自检照样全绿，已如实标注，不假装能测）。
+45. **四个窗口焦点策略各不相同** —— 桌宠 `false` / 提醒气泡 `false` / **专注提示窗口 `true`** /
+    设置窗口 + 聊天条 `true`。提示窗口要主人**看见并点按钮**，所以 `show()`+`focus()`，别照抄气泡的
+    `showInactive()`。自检钉了负对照：提示窗口 `true` 且气泡 `false`，两个值必须不一样。
+
 ---
 
 ## 七、常用命令
@@ -267,18 +313,28 @@ npm run test:nl-time         # 中文大白话解析 23
 npm run test:brain-local     # 本地大脑 19
 npm run test:brain-cloud     # 云端大脑 18
 npm run test:brain-router    # 大脑路由 19
+npm run test:focus-blacklist # 专注·黑名单校验 76
+npm run test:focus-timer     # 专注·计时状态机 34
+npm run test:focus-hosts     # 专注·hosts 文本 + DoH 99
+npm run test:focus-elevate   # 专注·提权壳 81
+npm run test:focus-helper    # 专注·真跑 focus-helper.ps1（不提权）51
+npm run test:focus-intercept # 专注·系统薄壳 47
 
 # Electron 端到端自检（慢，串行跑）
-npm run test:settings-e2e    # 日程管理窗口（含周视图）80
+npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页）113
+npm run test:focusmode-e2e   # 专注模式端到端 58
 npm run test:week-e2e        # 周视图端到端 19
 npm run test:chat-e2e        # 聊天端到端 17
 npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）
 npm run test:sync            # 按钮与桌宠同步（拖拽时按钮不许飘）
-npm run test:focus           # 桌宠不抢焦点（回归哨兵）
+npm run test:focus           # 桌宠不抢焦点（⚠ 和专注模式无关，专注模式是 focusmode）20
 npm run test:gaze            # 拖拽时视线跟随开关（回归哨兵）
 npm run test:exit            # 退出按钮（回归哨兵）
 npm run build                # 打包（electron-builder）
 ```
+
+⚠️ **专注模式真正动系统的那几步（弹 UAC / 改真实 hosts / 关软件）沙箱里测不了**，
+必须主人照 `HANDOFF-V3.md` 第三节 3.7 的 10 条清单真机验收。
 
 开发便利：
 - `PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 启动时自动打开日程管理窗口
