@@ -175,6 +175,9 @@ function normalizeSession(s) {
     endsAt: s.endsAt,
     minutes: Number.isInteger(s.minutes) && s.minutes > 0 ? s.minutes : null,
     state: 'running',
+    // 会话号（Task 6）。提权助手靠它认领「这趟专注的收工信号」——
+    // 上一趟遗留的 stop 文件不该结束这一趟。丢了也不致命，退化成 null。
+    sid: (typeof s.sid === 'string' && s.sid) ? s.sid : null,
   };
 }
 

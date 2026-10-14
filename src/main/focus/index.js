@@ -18,12 +18,19 @@
 //   本文件只做「编排 + 落盘」，require 了 ./store（它 require('electron')），
 //   所以**别拿它写单测**。
 //
-// ── 第一段（Task 4）只做计时 + 配置，完全不碰系统 ──
-//   真正的拦截（改 hosts / 关软件）在 Task 6-8 接进来。接口已经留好了位置。
+// ── 第一段（Task 4-5）只做计时 + 配置，完全不碰系统 ──
+// ── Task 6 起接上「提权助手」这一层（见 ./elevate.js）──
+//   本文件现在负责：开始专注时发一个会话号 + 清信号文件；结束专注时写控制文件
+//   请助手收工。**真正的拦截动作**（改 hosts、关软件）在 Task 7-8 接进来。
+//   ⚠ 本文件只写「控制文件」，从不杀助手进程 —— 强杀它就没机会还原 hosts 了。
 
 const store = require('./store');
 const timer = require('./timer');
 const { sanitizeBlacklist } = require('./blacklist');
+
+// ⚠ 拿到的是**模块**，要 createElevator() 才是能用的实例 ——
+//   require('./elevate') 本身只有工厂和纯函数，没有 startHelper / notifyStop。
+const elevator = require('./elevate').createElevator();
 
 // 每 5 秒查一次「到点了没有」。
 // ⚠ 不用 setTimeout(到点时间) —— 电脑睡一觉 / 关机再开，setTimeout 会把事件丢掉，
@@ -147,6 +154,11 @@ function start({ minutes } = {}) {
   const m = (Number.isFinite(minutes) && minutes > 0) ? Math.round(minutes) : cfg.lastMinutes;
   const session = timer.create({ minutes: m, now: Date.now() });
 
+  // 会话号（Task 6）：提权助手靠它认领「这趟专注的收工信号」。
+  // 顺手把两个信号文件清一遍 —— 控制文件标成「不许停」，心跳标成「还没听到」。
+  session.sid = elevator.newSid();
+  elevator.resetSignals(session.sid);
+
   cfg.session = session;
   cfg.lastMinutes = session.minutes;
   persist(cfg);
@@ -160,6 +172,17 @@ function start({ minutes } = {}) {
 function stop(reason = 'manual') {
   const cfg = config();
   if (!cfg.session) return { ok: true, alreadyStopped: true };
+
+  const sid = cfg.session.sid || null;
+
+  // 先请助手收工（写控制文件），再清会话。
+  // ★ 绝不杀助手进程 —— 强杀它就没有还原 hosts 的机会了。
+  //   写文件失败也不拦着结束：助手还有「到点自愈」这条兜底。
+  try {
+    elevator.notifyStop(sid);
+  } catch (err) {
+    console.error('[focus] 通知助手收工失败：', err && err.message);
+  }
 
   cfg.session = null;
   persist(cfg);
@@ -237,4 +260,8 @@ module.exports = {
   stop,
   requestStop,
   TICK_MS,
+  // Task 6 起：提权助手这一层。Task 7/8 会用它把 hosts 和 exe 列表送下去。
+  elevator,
+  paths: () => elevator.paths(),
+  isHelperAlive: () => elevator.isHelperAlive(config().session ? config().session.sid : null),
 };

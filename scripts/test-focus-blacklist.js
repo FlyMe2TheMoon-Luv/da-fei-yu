@@ -177,6 +177,18 @@ section('6. withDefaults：文件坏 / 缺字段时回落默认值');
 
   const w4 = bl.withDefaults({ session: { endsAt: 1700000000000, state: 'idle' } });
   ok(w4.session === null, '★ state 不是 running 的 session 不收（只认进行中的）');
+
+  // 会话号（Task 6）：提权助手靠它认领「这趟专注的收工信号」。
+  // 这条断言看着小，但少了它，「sid 被谁删掉」要等到真机验收才会暴露。
+  const w5 = bl.withDefaults({
+    session: { endsAt: 1700000000000, state: 'running', minutes: 25, startedAt: 1, sid: 'abc-123' },
+  });
+  ok(w5.session && w5.session.sid === 'abc-123', '★ 会话号跟着 session 一起存活（助手靠它认领收工信号）');
+
+  const w6 = bl.withDefaults({
+    session: { endsAt: 1700000000000, state: 'running', minutes: 25, startedAt: 1, sid: 42 },
+  });
+  okNeg(w6.session !== null && w6.session.sid === null, '★ 会话号不是字符串 → 退化成 null，不崩');
 }
 
 // ---------- 汇总 ----------
