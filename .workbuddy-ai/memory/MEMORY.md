@@ -11,8 +11,8 @@
   另加了「桌面双击快捷方式」（主人不依赖小安也能开关桌宠），也已完成。
   **v2（周视图 + 聊天）也已完成**（2026-10-13，14 个 Task，全量回归全绿）。
   **下一步：阶段 3 专注模式**（设计已拍板，见 `PLAN-V3-专注模式.md`，10 个 Task）。
-  **进度：Task 1–6 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
-  宠物陪伴 / 提权壳+常驻助手）。**下一步 Task 7 禁网站落地**。
+  **进度：Task 1–7 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
+  宠物陪伴 / 提权壳+常驻助手 / 禁网站落地）。**下一步 Task 8 禁软件落地**。
 - **阶段 3 专注模式的关键约定**（别改错）：
   - 拦截分两段：**改 hosts 挡网站** + **轮询杀进程挡软件**。整段专注**只弹一次 UAC** ——
     起一个**常驻提权助手**（`src/main/focus-helper.ps1`，**纯 ASCII**），从写 hosts 活到结束。
@@ -20,13 +20,26 @@
     助手还有**到点自愈**兜底：主进程崩了，它到点自己还原。
   - **控制文件 `focus-ctl.json`（只主进程写）和心跳 `focus-hb.json`（只助手写）必须分开** ——
     同一个文件会互相覆盖，导致专注结束不了。
+  - **计划文件带 `mode` 字段**：`'session'` = 正常专注（备份→写→循环→还原）；
+    `'restore'` = 一次性清理（只写干净文本，不备份、不循环、不杀进程）。
+    ★ 拿 `session` 模式去清残留，会把**脏文件当成原文件备份下来**再原样写回 = 等于没清。
   - **hosts 一律用 latin1（代码页 28591）读写**，做到**逐字节往返**（`hosts.js` 的承诺是
     「删完 == 原文逐字节相等」，GBK/UTF-8 中文注释都不能被改）。助手侧用 `GetEncoding(28591)`。
+    ★ `writeHostsText` 有守卫：出现任何 **> U+00FF 的字符直接抛错拒写** ——
+    因为 `Buffer.from(s,'latin1')` 会把汉字截成任意字节，其中可能有 `0x0D`，
+    还原时凭空多一个换行，把「逐字节相同」搞坏（真抓到过）。
   - **黑名单双重排除**自身与系统进程：JS 侧 `isProtectedExe` + 助手侧硬编码 guard 名单。
   - 提权壳 `src/main/focus/elevate.js`：碰 electron 的依赖**延迟 require**，所以能脱离 Electron 单测；
     实例要 `createElevator()` 拿，**`require` 回来的是模块不是实例**（踩过这个坑）。
   - **不提权也能验拦截**：给助手一份**假 hosts 副本**（临时目录），它只认计划文件里的路径，
     所以 `test:focus-helper` 全程不提权、不碰真实文件就能验完「备份/写入/还原/自愈」。
+  - **沙箱里能验完整条链**：有 `--selftest` 环境变量时 `focus.init({elevate:false,
+    hostsPath:<userData>/selftest-hosts})`，e2e 就能真写假 hosts、不弹 UAC、不碰真文件。
+  - **DoH（安全 DNS）是唯一「我们全对、功能全废」的坑**：浏览器开了安全 DNS 就绕过 hosts。
+    做法是**检测 + 引导关闭**，且**三态 `off/on/unknown`，绝不把 unknown 当 off**。
+    ★「unknown」还得再分两种说清：装了浏览器但配置里**没这一项**（= 你没改过）vs
+    **有这一项但值不认识**（= 版本太新）。真机上 Chrome/Edge 都装了却没这一项，
+    第一版提示语说「没检测到浏览器」——**是句错话，已修**。
 - **v2 四条已拍板**：聊天**本地规则 + 云端 AI 两套都做**（没网退回本地）/ 周视图上**点方块弹表单**改 /
   聊天框是**贴着桌宠的小气泡条** / 周视图**不翻页**（固定周一到周日）。
 - **v2 新架构约定**（别改错）：布局数学放主进程 `src/main/week.js`（纯函数、Node 可单测），
@@ -62,9 +75,9 @@
   `make-launcher`（生成桌面双击快捷方式 + 图标）/
   **纯 Node 自检**：`test:schedules`（63）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
   `test:quit`（8）/ `test:week`（53）/ `test:nl-time`（23）/ `test:brain-local`（19）/ `test:brain-cloud`（18）/
-  `test:brain-router`（19）/ `test:focus-blacklist`（60）/ `test:focus-timer`（34）/ `test:focus-hosts`（42）/
-  `test:focus-elevate`（81）/ `test:focus-helper`（27，**真跑 .ps1，不提权**）/
-  **Electron 端到端**：`test:settings-e2e`（105）/ `test:focusmode-e2e`（24）/ `test:reminder-e2e`（19）/
+  `test:brain-router`（19）/ `test:focus-blacklist`（60）/ `test:focus-timer`（34）/ `test:focus-hosts`（94）/
+  `test:focus-elevate`（81）/ `test:focus-helper`（35，**真跑 .ps1，不提权**）/ `test:focus-intercept`（47）/
+  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（34）/ `test:reminder-e2e`（19）/
   `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
   `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。
   ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），批量统计要用 `grep -E "(结果|结束)："`。
