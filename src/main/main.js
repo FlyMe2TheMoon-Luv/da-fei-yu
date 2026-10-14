@@ -2580,6 +2580,20 @@ if (!gotLock) {
     if (!app.isPackaged && process.env.PET_OPEN_CHAT === '1') {
       setTimeout(() => chatWindow.open(), 2800);
     }
+    // 开发便利：启动时直接弹一张「拦截提示」卡片，方便视觉验收 / 截图。
+    //   PET_OPEN_NOTICE=1 npm start -- --no-gpu
+    if (!app.isPackaged && process.env.PET_OPEN_NOTICE === '1') {
+      setTimeout(() => {
+        focusNotice.notify({
+          kind: 'warn',
+          head: '专注可能没用',
+          title: '检测到「安全 DNS」是开着的',
+          message: 'Chrome / Edge 开着安全 DNS 时会绕过 hosts 屏蔽，网站可能照样能打开。\n先去浏览器设置里把它关掉，专注才真的挡得住。',
+          primaryLabel: '仍要开始',
+          secondaryLabel: '先去关掉',
+        }).catch(() => { });
+      }, 3000);
+    }
 
     // 阶段 2-2：日程调度引擎。每 30 秒扫一遍，到点回调（启动时也会立刻扫一次，
     // 把「开机前 5 分钟内刚错过」的那条补上）。

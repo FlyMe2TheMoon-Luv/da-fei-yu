@@ -337,8 +337,9 @@ npm run build                # 打包（electron-builder）
 必须主人照 `HANDOFF-V3.md` 第三节 3.7 的 10 条清单真机验收。
 
 开发便利：
-- `PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 启动时自动打开日程管理窗口
+- `PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 启动时自动打开日程管理窗口（`=focus` / `=week` 指定页）
 - `PET_OPEN_CHAT=1 npm start -- --no-gpu` 启动时自动打开聊天条
+- `PET_OPEN_NOTICE=1 npm start -- --no-gpu` 启动时自动弹一张「拦截提示」卡片
 （都是做视觉验收 / 截图用）
 
 ---
