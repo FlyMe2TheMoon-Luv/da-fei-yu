@@ -14,6 +14,7 @@
 //   hosts.js 是纯函数、不 require Electron，所以能穷举。
 
 const hosts = require('../src/main/focus/hosts');
+const doh = require('../src/main/focus/doh');
 
 // ---------- 迷你测试框架 ----------
 let pass = 0;
@@ -166,6 +167,186 @@ section('8. ★ 负对照：该改的时候必须真的改');
   okNeg(a !== ORIGINAL, '★ 有合法域名时，结果必须和原文不同（防假实现）');
   okNeg(a.length > ORIGINAL.length, '★ 结果确实变长了');
   okNeg(hosts.hasBlock(a) === true, '★ 结果里确实有块');
+}
+
+// ---------- 9. 安全 DNS（DoH）检测：纯函数部分（Task 7）----------
+section('9. 安全 DNS 检测：读浏览器配置文本 → 判断开着没');
+{
+  // ① 显式关掉
+  ok(doh.parseChromePrefs('{"dns_over_https":{"mode":"off"}}') === 'off', '显式写着 off → 关着');
+
+  // ★ 负对照：没这个字段时**不许瞎判成「关着」**
+  //   判成 off 就等于「放心，屏蔽会生效」，结果主人发现网站照样能开 ——
+  //   这是「悄悄给一个错答案」，比说「不知道」坏得多。
+  okNeg(doh.parseChromePrefs('{}') === 'unknown', '★ 配置里根本没这一项 → 必须说「不知道」，不许当成关着');
+  okNeg(doh.parseChromePrefs('{"other":1}') === 'unknown', '★ 有别的配置但没有 DoH → 还是「不知道」');
+
+  // ② 开着
+  ok(doh.parseChromePrefs('{"dns_over_https":{"mode":"secure"}}') === 'on', '强制安全 DNS → 开着');
+  ok(doh.parseChromePrefs('{"dns_over_https":{"mode":"automatic"}}') === 'on', '自动模式也算开着');
+
+  // ★ 负对照：不认识的取值不许猜
+  okNeg(doh.parseChromePrefs('{"dns_over_https":{"mode":"what"}}') === 'unknown', '★ 取值不认识 → 「不知道」，不猜');
+  okNeg(doh.parseChromePrefs('{"dns_over_https":"yes"}') === 'unknown', '★ 结构不对（不是对象）→ 「不知道」');
+
+  // ★ 负对照：坏输入不许抛异常
+  okNeg(doh.parseChromePrefs('{oops') === 'unknown', '★ 坏 JSON 不崩，返回「不知道」');
+  okNeg(doh.parseChromePrefs('') === 'unknown', '★ 空文本不崩');
+  okNeg(doh.parseChromePrefs(null) === 'unknown', '★ null 不崩');
+  okNeg(doh.parseChromePrefs(undefined) === 'unknown', '★ undefined 不崩');
+  okNeg(doh.parseChromePrefs(12345) === 'unknown', '★ 数字不崩');
+}
+
+section('10. 安全 DNS：注册表策略（企业强制）也要认');
+{
+  const sample = [
+    '',
+    'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Google\\Chrome',
+    '    DnsOverHttpsMode    REG_SZ    secure',
+    '',
+  ].join('\r\n');
+
+  ok(doh.parseRegQuery(sample) === 'on', '注册表里策略是 secure → 开着');
+
+  const offSample = 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Google\\Chrome\r\n    DnsOverHttpsMode    REG_SZ    off\r\n';
+  ok(doh.parseRegQuery(offSample) === 'off', '注册表里策略是 off → 关着');
+
+  // ★ 负对照：查不到（reg query 会输出「错误: 找不到指定的注册表项」）不许当成 off
+  okNeg(doh.parseRegQuery('错误: 系统找不到指定的注册表项或值。') === 'unknown',
+    '★ 注册表里没这项 → 「不知道」，不许当成关着');
+  okNeg(doh.parseRegQuery('') === 'unknown', '★ 空输出 → 「不知道」');
+  okNeg(doh.parseRegQuery(null) === 'unknown', '★ null → 「不知道」');
+  okNeg(doh.parseRegQuery('DnsOverHttpsMode    REG_SZ    ???') === 'unknown',
+    '★ 取值不认识 → 「不知道」');
+}
+
+// ---------- 11. 区分两种「不知道」 ----------
+// 这一段是「提示语曾经骗过人」的直接产物：
+// 真机上 Chrome / Edge 都装了，但两个 Preferences 里都没有 dns_over_https 这一项，
+// 而当时的提示语却说「没检测到 Chrome / Edge」—— 主人看到这句话会以为「我不用管了」，
+// 实际上浏览器照样能绕过 hosts。所以「不知道」必须再分两种，各自说清。
+section('11. prefsHasDoh：这份配置里到底有没有安全 DNS 这一项');
+{
+  ok(doh.prefsHasDoh('{"dns_over_https":{"mode":"off"}}') === true, '有这一项 → true');
+  ok(doh.prefsHasDoh('{"dns_over_https":{"mode":"what"}}') === true, '★ 有这一项、但取值不认识 → 也是 true');
+  ok(doh.prefsHasDoh('{}') === false, '没这一项 → false');
+  ok(doh.prefsHasDoh('{"other":1}') === false, '有别的配置但没有它 → false');
+  // ★ 负对照：坏输入不许抛异常
+  okNeg(doh.prefsHasDoh('{oops') === false, '★ 坏 JSON → false，不崩');
+  okNeg(doh.prefsHasDoh('') === false, '★ 空文本 → false');
+  okNeg(doh.prefsHasDoh(null) === false, '★ null → false');
+}
+
+// ---------- 12. 提示语：四种情况必须说四句不同的话 ----------
+// 主人该做的事不一样，糊成一句就是骗人。
+section('12. adviceFor：提示语要「说清是哪种情况」');
+{
+  const on = doh.adviceFor('on', { names: ['Chrome'], installedCount: 1, sawPref: true });
+  ok(on.includes('开着'), '① 开着 → 明说开着');
+  ok(on.includes('关掉'), '① 开着 → 给出关掉的方法');
+  ok(on.includes('Chrome'), '① 开着 → 点名是哪个浏览器');
+
+  const off = doh.adviceFor('off', { names: ['Chrome'], installedCount: 1, sawPref: true });
+  ok(off.includes('没开'), '② 关着 → 明说没开、屏蔽会生效');
+
+  // ③ 装了浏览器，读到了这一项，但取值不认识
+  const sawPref = doh.adviceFor('unknown', { names: ['Chrome', 'Edge'], installedCount: 2, sawPref: true });
+  ok(sawPref.includes('取值不认识'), '③ 有这一项但读不懂 → 说「取值不认识」');
+  okNeg(!sawPref.includes('没检测到'), '★ ③ 绝不能说出「没检测到浏览器」这句错话');
+
+  // ④ 装了浏览器，但配置里压根没这一项（= 主人从没改过它）
+  const noPref = doh.adviceFor('unknown', { names: ['Chrome', 'Edge'], installedCount: 2, sawPref: false });
+  ok(noPref.includes('没有'), '④ 装了但没这一项 → 说「配置里没有这一项」');
+  okNeg(!noPref.includes('没检测到'), '★ ④ 也不能说「没检测到浏览器」（这是真机上出现过的错话）');
+  okNeg(noPref !== sawPref, '★ ③ 和 ④ 必须说不一样的话（不能糊成一句）');
+
+  // ⑤ 一个浏览器都没装
+  const none = doh.adviceFor('unknown', { names: [], installedCount: 0, sawPref: false });
+  ok(none.includes('没检测到'), '⑤ 真的没装 → 才可以说「没检测到」');
+
+  // ★ 负对照：四种情况的提示语两两不许相同（防「随便返回一句固定的」）
+  const all = [on, off, sawPref, noPref, none];
+  const uniq = new Set(all);
+  okNeg(uniq.size === 5, '★ 五种情况的提示语两两不同（防返回固定一句话的假实现）');
+
+  // ★ 负对照：不传 info 也不许崩
+  okNeg(typeof doh.adviceFor('unknown') === 'string', '★ 不传 info 也不崩');
+  okNeg(typeof doh.adviceFor('on', []) === 'string', '★ info 传成数组也不崩（旧调用方式）');
+}
+
+// ---------- 13. 用假世界跑一遍探测层（真机那种情况）----------
+// createDetector 的探测依赖全可注入，所以能在没有 Chrome / Edge 的机器上
+// 复现「装了但配置里没这一项」这个真实场景。
+section('13. createDetector：假世界里复现真机情况');
+{
+  const fakePrefsNoDoh = JSON.stringify({ profile: { name: 'x' }, some_other_setting: 1 });
+
+  function makeWorld({ chrome = true, edge = true, prefsText = fakePrefsNoDoh, regOut = null } = {}) {
+    const files = {};
+    const dirs = {};
+    if (chrome) {
+      dirs['C:\\LA\\Google\\Chrome\\User Data'] = ['Default'];
+      files['C:\\LA\\Google\\Chrome\\User Data\\Default\\Preferences'] = prefsText;
+    }
+    if (edge) {
+      dirs['C:\\LA\\Microsoft\\Edge\\User Data'] = ['Default'];
+      files['C:\\LA\\Microsoft\\Edge\\User Data\\Default\\Preferences'] = prefsText;
+    }
+    return {
+      env: { LOCALAPPDATA: 'C:\\LA' },
+      exists: (p) => Object.prototype.hasOwnProperty.call(files, p) || Object.prototype.hasOwnProperty.call(dirs, p),
+      readText: (p) => { if (!(p in files)) throw new Error('ENOENT'); return files[p]; },
+      listDirs: (p) => {
+        const names = dirs[p];
+        if (!names) throw new Error('ENOENT');
+        return names.map((n) => ({ name: n, isDirectory: () => true }));
+      },
+      regQuery: () => regOut,
+    };
+  }
+
+  // 真机情况：两个浏览器都装了，但配置里都没有 dns_over_https
+  const d1 = doh.createDetector(makeWorld()).detect();
+  ok(d1.level === 'unknown', '两个都装了但没配 → 总状态「不知道」');
+  ok(d1.browsers.filter((b) => b.installed).length === 2, '认出装了 2 个浏览器');
+  ok(d1.sawPref === false, 'sawPref = false（确实没有这一项）');
+  okNeg(!d1.advice.includes('没检测到'), '★ 提示语不能说「没检测到浏览器」（真机错话）');
+  ok(d1.advice.includes('没有'), '提示语说清是「配置里没有这一项」');
+
+  // 配置里明确写着开着
+  const d2 = doh.createDetector(makeWorld({ prefsText: '{"dns_over_https":{"mode":"secure"}}' })).detect();
+  ok(d2.level === 'on', '配置写着 secure → 总状态「开着」');
+  ok(d2.advice.includes('开着'), '提示语说「开着」');
+
+  // 配置里明确写着关掉
+  const d3 = doh.createDetector(makeWorld({ prefsText: '{"dns_over_https":{"mode":"off"}}' })).detect();
+  ok(d3.level === 'off', '配置写着 off → 总状态「关着」');
+
+  // 一个浏览器都没装
+  const d4 = doh.createDetector(makeWorld({ chrome: false, edge: false })).detect();
+  ok(d4.level === 'unknown', '一个都没装 → 「不知道」');
+  ok(d4.advice.includes('没检测到'), '一个都没装才说「没检测到」');
+
+  // 企业策略强制开着 —— 即使浏览器自己说关着，也必须判「开着」
+  const regOn =
+    'HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Google\\Chrome\r\n    DnsOverHttpsMode    REG_SZ    secure\r\n';
+  const d5 = doh.createDetector(makeWorld({ prefsText: '{"dns_over_https":{"mode":"off"}}', regOut: regOn })).detect();
+  okNeg(d5.level === 'on', '★ 浏览器说关着、企业策略说开着 → 以「开着」为准（策略优先级高）');
+  ok(d5.policy === 'on', 'policy 字段也报「开着」');
+
+  // ★ 负对照：探测层内部抛异常时，detect() 不许把异常抛出来
+  const boom = doh.createDetector({
+    env: { LOCALAPPDATA: 'C:\\LA' },
+    exists: () => { throw new Error('boom'); },
+    readText: () => { throw new Error('boom'); },
+    listDirs: () => { throw new Error('boom'); },
+    regQuery: () => { throw new Error('boom'); },
+  });
+  let threw = false;
+  let d6 = null;
+  try { d6 = boom.detect(); } catch { threw = true; }
+  okNeg(threw === false, '★ 探测内部炸了，detect() 也不许抛异常');
+  okNeg(d6 && typeof d6.advice === 'string', '★ 炸了也要给出一句人话，不能返回空');
 }
 
 // ---------- 汇总 ----------

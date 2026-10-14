@@ -393,6 +393,17 @@ function init(opts = {}) {
   });
   ipcMain.handle('focus:set-blacklist', (_e, list) => focus.setBlacklist(list || {}));
   ipcMain.handle('focus:set-preset', (_e, minutes) => focus.setPreset(minutes));
+  // 查「安全 DNS」：开着的话浏览器会绕过 hosts，屏蔽白做 —— 提前告诉主人
+  ipcMain.handle('focus:doh', () => {
+    try {
+      return focus.checkDoh();
+    } catch (err) {
+      console.error('[settings] 检测安全 DNS 失败：', err && err.message);
+      return null;
+    }
+  });
+  // ⚠ focus:start 现在是**异步**的（要等主人点 UAC）。
+  //   ipcMain.handle 会自动 await 它返回的 Promise，界面那边不用改。
   ipcMain.handle('focus:start', (_e, opts) => focus.start(opts || {}));
   // 「结束专注」要报「按下那一刻」——够没够 3 秒由 focus/requestStop 判（规则只有一处）
   ipcMain.handle('focus:stop', (_e, payload) => focus.requestStop(payload || {}));

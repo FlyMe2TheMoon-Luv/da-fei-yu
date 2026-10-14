@@ -11,14 +11,19 @@
 // ── 为什么叫 focusmode 而不是 focus ──
 //   `--selftest=focus` 已经被「桌宠不抢焦点」那个自检占了（见 PLAN-V3 命名冲突一节）。
 //
-// ── 这一段完全不碰系统 ──
-//   改 hosts / 关软件在 Task 6-8，那几步只能真机验收。
-//   这里只验「计时 + 配置 + 宠物陪伴」。
+// ── ★ 关于「碰系统」这件事 ──
+//   自检时 main.js 会把专注模块切到**沙箱模式**：hosts 指向 userData 里的假文件、
+//   而且不提权。所以这一段能验到「真的改了 hosts / 真的还原了」这整条链，
+//   却**不会弹 UAC、不会碰主人的真实 hosts**。
+//   剩下真正只能真机验的就两件事：UAC 弹窗本身、以及网站是不是真的打不开了。
 //
 // ── ⚠ 为什么整段包在 try 里 ──
 //   自检**自己出错也必须有结论**。曾经没包：第 ④⑤ 步故意失败后，第 ⑥ 步读到
 //   session 是 null 就抛异常，整个自检卡死 —— 既不打印结论也不退出，
 //   只能等外部超时杀掉，现象是「跑了很久什么都没输出」，根本查不出哪儿错了。
+
+const fs = require('fs');
+const hosts = require('./focus/hosts');
 
 module.exports = {
   async run(ctx) {
@@ -67,6 +72,17 @@ module.exports = {
       // `--isolated` 已经把 userData 指到临时目录，不会碰主人的真实数据。
       focus.stop('selftest-reset');
       focus.setBlacklist({ domains: [], exes: [] });
+
+      // 沙箱用的假 hosts。自检期间「改 hosts / 还原 hosts」这条链就落在它身上。
+      const hostsPath = focus.hostsPath();
+      const readHosts = () => {
+        try { return fs.readFileSync(hostsPath).toString('latin1'); } catch { return null; }
+      };
+      const hostsBefore = readHosts();
+      log(`沙箱 hosts：${hostsPath}`);
+      ok(hostsPath !== 'C:\\Windows\\System32\\drivers\\etc\\hosts',
+        '★ 自检的 hosts 指向假文件，绝不是系统真实 hosts');
+      ok(typeof hostsBefore === 'string' && hostsBefore.length > 0, '沙箱 hosts 有初始内容');
 
       // ===== ① 打开设置窗口的「专注」页 =====
       log('\n① 打开设置窗口 → 专注页');
@@ -152,6 +168,24 @@ module.exports = {
       ok(!!petFocus && petFocus.hits >= 1, '桌宠那边确实收到了「专注开始」事件（计数 ≥1）',
         petFocus ? ` → 收到 ${petFocus.hits} 次` : '');
 
+      // ===== ③b 拦截链：hosts 真的被改了（Task 7）=====
+      // 这一段验的是「专注到底有没有在挡东西」——之前几轮它只验了「计时 + 陪伴」。
+      log('\n③b 拦截链：hosts 里真的写进了屏蔽块吗');
+      await sleep(300);
+      const hostsDuring = readHosts();
+      ok(typeof hostsDuring === 'string' && hosts.hasBlock(hostsDuring),
+        '★ hosts 里真的出现了 FocusMode 标记块（不是「以为在挡」）');
+      ok(typeof hostsDuring === 'string' && hostsDuring.includes('0.0.0.0 www.bilibili.com'),
+        '★ 要挡的域名真的写进去了');
+      ok(!!hostsBefore && typeof hostsDuring === 'string' && hostsDuring.includes(hostsBefore),
+        '★ 主人原有的 hosts 内容一行没少（我们只往后追加）', true);
+      ok(typeof hostsDuring === 'string' && hosts.blockedDomains(hostsDuring).length === 1,
+        '★ 块里就一个域名（没把别的也带进去）');
+
+      // ★ 负对照：黑名单里没有的域名不许出现
+      ok(typeof hostsDuring === 'string' && !hostsDuring.includes('zhihu.com'),
+        '★ 没加进黑名单的域名没有被误挡', true);
+
       // ===== ④ ★ 负对照：按下 1 秒就松手 → 必须还在专注中 =====
       log('\n④ ★ 负对照：长按不足 3 秒就松手 → 结束不了');
       await sw.webContents.executeJavaScript(`(async () => {
@@ -202,6 +236,19 @@ module.exports = {
       const petAfter = await petFocusState();
       ok(!!petAfter && petAfter.badgeVisible === false, '★ 桌宠的专注角标确实收起来了',
         petAfter ? ` → badgeVisible=${petAfter.badgeVisible}` : '');
+
+      // ===== ⑦b 拦截链：hosts 真的还原了 =====
+      // ★ 这是整段自检里最要紧的一条 —— 如果还原不了，
+      //   主人的网站会一直打不开，而且是永久性的。
+      log('\n⑦b 拦截链：专注结束后 hosts 还原了吗');
+      await sleep(600);
+      const hostsAfter = readHosts();
+      ok(typeof hostsAfter === 'string' && !hosts.hasBlock(hostsAfter),
+        '★ hosts 里的标记块没了（网站能重新打开了）');
+      ok(!!hostsBefore && hostsAfter === hostsBefore,
+        '★ hosts 和开始之前**逐字节相同**（主人原有内容一字不差）');
+      ok(hosts.blockedDomains(hostsAfter || '').length === 0,
+        '★ 没有任何残留的屏蔽域名');
 
       // ===== ⑧ 清理 =====
       log('\n⑧ 清理');

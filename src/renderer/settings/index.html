@@ -410,6 +410,21 @@
     }
     .focus-top h1 { font-size: 17px; }
 
+    /* 安全 DNS 提醒：三态三种颜色，不用红色吓人，但要看得见 */
+    #focus-doh {
+      flex: none;
+      border: 1px solid;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12.5px;
+      line-height: 1.75;
+    }
+    #focus-doh.hidden { display: none; }
+    #focus-doh.warn    { background: #fff7ed; border-color: #fdba74; color: #7c2d12; }
+    #focus-doh.ok      { background: #f0fdf4; border-color: #86efac; color: #14532d; }
+    #focus-doh.unknown { background: #f8fafc; border-color: #cbd5e1; color: #334155; }
+    #focus-doh b { font-weight: 600; }
+
     .focus-card {
       background: var(--card);
       border: 1px solid var(--line);
@@ -674,6 +689,11 @@
       <button id="btn-focus-back" class="ghost">← 返回日程</button>
       <h1>专注</h1>
     </div>
+
+    <!-- 安全 DNS 提醒（Task 7）：
+         浏览器开着「安全 DNS」的话，域名解析不走系统 —— 我们改 hosts 就白改了。
+         这是唯一一个「我们全对、功能全废」的坑，所以放在最上面显眼处。 -->
+    <div id="focus-doh" class="hidden"></div>
 
     <!-- 1. 要挡住的东西 -->
     <section class="focus-card">

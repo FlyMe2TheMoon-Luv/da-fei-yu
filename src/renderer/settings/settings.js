@@ -47,6 +47,7 @@ const el = {
   btnAddExe: document.getElementById('btn-add-exe'),
   focusExes: document.getElementById('focus-exes'),
   focusError: document.getElementById('focus-error'),
+  focusDoh: document.getElementById('focus-doh'),
   focusPresets: document.getElementById('focus-presets'),
   focusCustomRow: document.getElementById('focus-custom-row'),
   fCustomMin: document.getElementById('f-custom-min'),
@@ -452,6 +453,39 @@ function renderFocus(data) {
 async function loadFocus() {
   const data = await api.focusGet();
   renderFocus(data);
+  // 顺手查一遍「安全 DNS」——它开着的话 hosts 屏蔽会被绕过，得让主人看见
+  refreshDoh();
+}
+
+// 安全 DNS 提醒条。
+// 三态各一种颜色：warn（开着，会绕过屏蔽）/ ok（关着，放心）/ unknown（查不到，别乱保证）。
+// ⚠ 文本一律 textContent —— advice 里有浏览器名之类的动态内容。
+function renderDoh(info) {
+  const box = el.focusDoh;
+  if (!box) return;
+  if (!info || !info.advice) { box.classList.add('hidden'); return; }
+
+  box.classList.remove('hidden', 'warn', 'ok', 'unknown');
+  box.classList.add(info.level === 'on' ? 'warn' : info.level === 'off' ? 'ok' : 'unknown');
+
+  const head = document.createElement('b');
+  head.textContent = info.level === 'on'
+    ? '⚠ 安全 DNS 开着，网站可能拦不住'
+    : info.level === 'off'
+      ? '✓ 屏蔽会正常生效'
+      : '安全 DNS：没能确认';
+
+  box.textContent = '';
+  box.appendChild(head);
+  box.appendChild(document.createTextNode('　' + info.advice));
+}
+
+async function refreshDoh() {
+  try {
+    renderDoh(await api.focusDoh());
+  } catch {
+    renderDoh(null);
+  }
 }
 
 // 专注中每 1 秒问一次主进程「还剩多久」——倒计时以主进程为准，界面不自己减。
@@ -551,12 +585,23 @@ async function applyCustomMinutes() {
 
 async function startFocus() {
   const minutes = focusData ? focusData.lastMinutes : 25;
-  const res = await api.focusStart({ minutes });
+  // ⚠ 这一步现在会等主人点 UAC 的「是」——可能要好几秒，界面得有个「正在等」的样子
+  el.btnFocusStart.disabled = true;
+  el.btnFocusStart.textContent = '正在等授权…';
+  let res;
+  try {
+    res = await api.focusStart({ minutes });
+  } finally {
+    el.btnFocusStart.disabled = false;
+    el.btnFocusStart.textContent = '开始专注';
+  }
   if (!res || res.ok === false) {
     showFocusError((res && res.error) || '开始失败');
+    if (res && res.doh) renderDoh(res.doh);
     return;
   }
   hideFocusError();
+  if (res.doh) renderDoh(res.doh);
   await loadFocus();
   startCountdown();
   toast('专注开始，我陪着你～');

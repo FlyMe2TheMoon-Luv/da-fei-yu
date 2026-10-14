@@ -3,11 +3,18 @@
 # Focus Mode -- elevated helper. Runs as Administrator for one whole focus
 # session. Started exactly once per session (that is the single UAC prompt).
 #
-# It does only four things, in this order:
-#   1. back up the original hosts file  (only if no backup exists yet)
-#   2. write the new hosts text         (verbatim -- no text processing here)
-#   3. kill the blacklisted processes   (loop, every few seconds)
-#   4. restore the original hosts file, flush DNS, exit
+# Two modes, picked by the "mode" field of the plan file:
+#
+#   mode = "session"  (default) -- one whole focus session
+#     1. back up the original hosts file  (only if no backup exists yet)
+#     2. write the new hosts text         (verbatim -- no text processing here)
+#     3. kill the blacklisted processes   (loop, every few seconds)
+#     4. restore the original hosts file, flush DNS, exit
+#
+#   mode = "restore" -- one shot cleanup of leftovers from a dead session
+#     write the clean hosts text, flush DNS, exit. No backup, no loop.
+#     (In this mode the file on disk is already dirty, so a backup would
+#      capture our own block as "the original" and write it right back.)
 #
 # It deliberately does NOT parse or edit hosts text. All text logic lives in
 # JS (src/main/focus/hosts.js) where it is unit tested. This script is a
@@ -144,7 +151,33 @@ if ([string]::IsNullOrEmpty($script:HostsPath) -or [string]::IsNullOrEmpty($sid)
   exit 2
 }
 
-Write-Log ('helper started pid=' + $PID + ' sid=' + $sid + ' exes=' + ($exes -join ','))
+Write-Log ('helper started pid=' + $PID + ' sid=' + $sid + ' mode=' + [string]$plan.mode + ' exes=' + ($exes -join ','))
+
+# ---------------------------------------------------------------------------
+# One-shot mode: write the clean text and leave.
+#
+# Used to clean up leftovers from a session that died (machine rebooted, or the
+# elevated process was killed). In this mode the hosts file on disk is the DIRTY
+# one, so the normal backup/restore dance would be exactly wrong: the backup
+# would capture our own block as "the original", and the restore at the end
+# would write it straight back. So: no backup, no loop. Just write and exit.
+# ---------------------------------------------------------------------------
+
+if ([string]$plan.mode -eq 'restore') {
+  if ($null -eq $plan.hostsText) {
+    Write-Log 'ERROR: restore mode but no hostsText in plan'
+    exit 2
+  }
+  try {
+    Write-HostsText ([string]$plan.hostsText)
+    Write-Log 'hosts cleaned up (one shot)'
+    Invoke-FlushDns
+    exit 0
+  } catch {
+    Write-Log ('ERROR one shot cleanup: ' + $_.Exception.Message)
+    exit 3
+  }
+}
 
 # ---------------------------------------------------------------------------
 # 1. Back up the original hosts -- only when there is no backup yet.

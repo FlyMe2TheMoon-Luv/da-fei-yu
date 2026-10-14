@@ -105,6 +105,9 @@ function makeSandbox(opts = {}) {
     preExistingBackup = null,
     omitSid = false,
     endsAt = null,
+    mode = 'session',
+    dirtyHosts = false,
+    planOverrides = {},
   } = opts;
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'focus-helper-'));
@@ -116,13 +119,15 @@ function makeSandbox(opts = {}) {
     logPath: path.join(dir, 'focus-helper.log'),
   };
 
-  fs.writeFileSync(p.hostsPath, ORIGINAL);
-  if (preExistingBackup) fs.writeFileSync(p.backupPath, preExistingBackup);
-
   const newText = hosts.applyBlock(ORIGINAL_TEXT, BLOCKED);
   const restoreText = hosts.removeBlock(newText);
 
+  // dirtyHosts：假装「上次专注没清干净」，文件里已经带着我们的块
+  fs.writeFileSync(p.hostsPath, dirtyHosts ? Buffer.from(newText, 'latin1') : ORIGINAL);
+  if (preExistingBackup) fs.writeFileSync(p.backupPath, preExistingBackup);
+
   const plan = {
+    mode,
     sid: omitSid ? '' : sid,
     hostsPath: p.hostsPath,
     hostsText: newText,
@@ -134,6 +139,7 @@ function makeSandbox(opts = {}) {
     hbPath: p.hbPath,
     logPath: p.logPath,
     createdAt: Date.now(),
+    ...planOverrides,
   };
 
   const planPath = path.join(dir, 'focus-plan.json');
@@ -308,6 +314,45 @@ section('5. ★ 负对照：控制文件里是别的会话号 → 不许收工')
     okNeg(readBytes(s.p.hostsPath).equals(ORIGINAL), '★ hosts 还原干净');
   } finally {
     cleanup(s.dir);
+  }
+}
+
+// ---------- 6. restore 模式：一次性清残留 ----------
+section('6. restore 模式：只写一次干净内容就退出，绝不备份、绝不循环');
+{
+  const s = makeSandbox({
+    mode: 'restore',
+    dirtyHosts: true,                                   // 文件里已经带着我们的块
+    planOverrides: { hostsText: ORIGINAL_TEXT },        // 要写的 = 干净原文
+  });
+  try {
+    ok(readBytes(s.p.hostsPath).includes(Buffer.from(hosts.BEGIN_MARK, 'latin1')),
+      '（准备）文件一开始确实是脏的');
+
+    const code = await runHelper(s.planPath);
+    ok(code === 0, 'restore 模式正常退出');
+
+    okNeg(readBytes(s.p.hostsPath).equals(ORIGINAL), '★ hosts 被清干净了（逐字节等于原文）');
+    okNeg(!fs.existsSync(s.p.backupPath),
+      '★ 没有产生备份文件 —— 这一条最关键：一旦备份了，脏内容就被当成「原始内容」记下来');
+    okNeg(!fs.existsSync(s.p.hbPath),
+      '★ 没有写心跳 —— 证明它没有进循环，是「一次性」的');
+
+    const log = fs.existsSync(s.p.logPath) ? fs.readFileSync(s.p.logPath, 'utf8') : '';
+    okNeg(/backed up/i.test(log) === false, '★ 日志里没有「备份」这一步');
+  } finally {
+    cleanup(s.dir);
+  }
+
+  // ★ 负对照：restore 模式但计划里没有 hostsText → 必须拒绝动手
+  {
+    const s2 = makeSandbox({ mode: 'restore', dirtyHosts: true, planOverrides: { hostsText: null } });
+    try {
+      const code = await runHelper(s2.planPath);
+      okNeg(code === 2, '★ restore 模式没给内容 → 退出码 2');
+      okNeg(readBytes(s2.p.hostsPath).includes(Buffer.from(hosts.BEGIN_MARK, 'latin1')),
+        '★ 文件保持原样（宁可不清，也不能瞎写）');
+    } finally { cleanup(s2.dir); }
   }
 }
 

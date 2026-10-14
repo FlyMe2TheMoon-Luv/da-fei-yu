@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   focusNormalize: (kind, raw) => ipcRenderer.invoke('focus:normalize', { kind, raw }),
   focusSetBlacklist: (list) => ipcRenderer.invoke('focus:set-blacklist', list),
   focusSetPreset: (minutes) => ipcRenderer.invoke('focus:set-preset', minutes),
+  // 查一遍浏览器的「安全 DNS」——开着的话 hosts 屏蔽会被绕过，得提前告诉主人
+  focusDoh: () => ipcRenderer.invoke('focus:doh'),
   focusStart: (opts) => ipcRenderer.invoke('focus:start', opts),
   // payload = { pressedAt }：按下「结束专注」那一刻的时间戳（主进程据此判断够没够 3 秒）
   focusStop: (payload) => ipcRenderer.invoke('focus:stop', payload),

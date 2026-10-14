@@ -2205,6 +2205,69 @@ async function runSettingsSelfTest() {
       ` → ${layout.presets} 个`);
   }
 
+  // ===== ⑧b⁰ 安全 DNS（DoH）提醒条（阶段 3 · Task 7）=====
+  // 为什么要单独验：这是「我们全对、功能全废」的那个坑 ——
+  // 浏览器开了安全 DNS，hosts 改得一点没错，网站照样打得开。
+  // 所以「开始专注前必须让主人看见」这件事，得钉死在自检里，不能只是代码里写了。
+  log('⑧b⁰ 安全 DNS 提醒条：查到了没、显示出来了没、颜色对不对');
+  {
+    const info = focus.checkDoh();
+    const three = ['off', 'on', 'unknown'];
+    ok(info && three.includes(info.level),
+      '★ 主进程给出了「安全 DNS」三态结论（不是随便一个值）',
+      ` → ${info && info.level}`);
+    ok(info && typeof info.advice === 'string' && info.advice.length > 8,
+      '★ 并且带了一句给主人看的人话',
+      ` → “${info && info.advice}”`);
+
+    // 提醒条真渲染出来了没：颜色类 + 文本都得和主进程报的三态对得上
+    const dom = await sw.webContents.executeJavaScript(`(() => {
+      const b = document.getElementById('focus-doh');
+      if (!b) return { missing: true };
+      return {
+        hidden: b.classList.contains('hidden'),
+        cls: [...b.classList].join(' '),
+        text: b.textContent.trim(),
+      };
+    })()`);
+
+    if (dom.missing) {
+      ok(false, '★ 专注页上没有 #focus-doh 提醒条 —— 主人永远看不到这条警告');
+    } else {
+      ok(dom.hidden === false, '★ 提醒条显示出来了（没被藏起来）');
+      ok(dom.text.includes(info.advice),
+        '★ 界面上显示的就是主进程给的那句人话（没被改写/截断）',
+        ` → “${dom.text.slice(0, 40)}…”`);
+      const wantCls = info.level === 'on' ? 'warn' : info.level === 'off' ? 'ok' : 'unknown';
+      ok(dom.cls.includes(wantCls),
+        '★ 提醒条的配色和「三态」对得上（开着=警示、关着=放心、查不到=中性）',
+        ` → ${dom.cls} / 期望含 ${wantCls}`);
+    }
+
+    // ★ 负对照：把三种状态分别喂给渲染函数，**必须画出三种不一样的东西**。
+    //   防的是「无论什么状态都画同一句话/同一个颜色」的假实现 ——
+    //   那种实现下，主人开着安全 DNS 也只会看到一句「放心」，比不显示还坏。
+    const trio = await sw.webContents.executeJavaScript(`(() => {
+      const box = document.getElementById('focus-doh');
+      const snap = (lv) => {
+        renderDoh({ level: lv, advice: 'ADVICE-' + lv });
+        return { cls: [...box.classList].join(' '), text: box.textContent.trim() };
+      };
+      const on = snap('on'), off = snap('off'), unk = snap('unknown');
+      return { on, off, unk };
+    })()`);
+    ok(trio.on.cls !== trio.off.cls && trio.on.cls !== trio.unk.cls && trio.off.cls !== trio.unk.cls,
+      '★ 负对照：三种状态画出三种不同配色（防「永远同一个颜色」的假实现）',
+      ` → on=${trio.on.cls} / off=${trio.off.cls} / unknown=${trio.unk.cls}`);
+    ok(trio.on.text !== trio.off.text && trio.off.text !== trio.unk.text && trio.on.text !== trio.unk.text,
+      '★ 负对照：三种状态画出三句不同的话（防「永远同一句话」的假实现）');
+    ok(trio.on.cls.includes('warn') && trio.off.cls.includes('ok'),
+      '★ 「开着」必须是警示色、「关着」必须是放心色（别把最该提醒的那个画得最不起眼）');
+
+    // 把界面恢复成真实状态，别把自检的假数据留在屏幕上
+    await sw.webContents.executeJavaScript('refreshDoh()');
+  }
+
   // ★ 负对照：黑名单空着点「开始专注」→ 必须被拒（不能「专注了个寂寞」）
   log('⑧b′ ★ 负对照：黑名单空着点「开始专注」→ 被拒');
   const emptyStart = await sw.webContents.executeJavaScript(`(async () => {
@@ -2439,9 +2502,16 @@ if (!gotLock) {
     chatWindow.init({ getPetWindow: () => win });
 
     // 阶段 3：专注模式主控。
-    // 第一段（Task 4）只做「计时 + 配置」，完全不碰系统；
+    //   Task 4-5：计时 + 配置 + 宠物陪伴（不碰系统）
+    //   Task 6-7：提权助手 + 真的改 hosts 挡网站
     // 会话状态一变就广播一声 —— Task 5 的宠物陪伴会接在这里换姿态、说话。
+    //
+    // ⚠ 自检（--selftest）时切到「沙箱」：hosts 指向 userData 里的假文件、且不提权。
+    //   自检绝不能弹 UAC、绝不能碰主人的真实 hosts —— 否则自检本身就变成危险操作了。
+    const focusSandbox = !!process.env.PET_SELFTEST;
     focus.init({
+      elevate: !focusSandbox,
+      hostsPath: focusSandbox ? path.join(app.getPath('userData'), 'selftest-hosts') : undefined,
       // 开始 / 结束：换姿态、说话
       onChange: (st) => {
         const wasRunning = petFocusRunning;
@@ -2453,6 +2523,16 @@ if (!gotLock) {
       // 每 5 秒一次的心跳：让桌宠把剩余时间角标校正过来
       onTick: () => notifyPetFocus('tick'),
     });
+
+    // 启动兜底：上次专注没正常结束的话，hosts 里可能还留着指向 0.0.0.0 的块，
+    // 主人的网站会一直打不开，而且没有任何人会来收拾。
+    //
+    // ⚠ 这一步**可能弹一次 UAC**（只在真检测到残留时才会），所以延后几秒 ——
+    //   等桌宠窗口先显示出来，别让主人开机就看到一个莫名其妙的提权弹窗。
+    //   失败也不影响启动（recoverIfDirty 内部已经全包了 try/catch）。
+    setTimeout(() => {
+      focus.recoverIfDirty().catch(() => { });
+    }, 4000);
 
     // 开发便利：启动时直接把日程管理窗口开出来，方便做视觉验收 / 截图。
     //   PET_OPEN_SETTINGS=1     → 开在「列表」

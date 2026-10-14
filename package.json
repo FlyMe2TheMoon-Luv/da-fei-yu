@@ -38,7 +38,8 @@
     "make-tray-icon": "node scripts/make-tray-icon.js",
     "make-launcher": "node scripts/make-launcher.js",
     "shot": "electron scripts/shot.js",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "test:focus-intercept": "node scripts/test-focus-intercept.js"
   },
   "author": "",
   "license": "MIT",

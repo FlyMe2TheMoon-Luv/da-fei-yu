@@ -97,8 +97,15 @@ function newSid() {
 }
 
 // 组装计划文件的内容（纯函数，Task 7 直接拿来用）
-function makePlan({ sid, hostsText, restoreText, exes, endsAt, now }, paths) {
+//
+// mode 两种，助手的行为完全不同（见 focus-helper.ps1）：
+//   'session' —— 一整段专注：备份 → 写 hosts → 循环（杀进程/看信号/看时间）→ 还原
+//   'restore' —— 一次性清残留：只写一次干净内容就退出，**不备份、不还原、不循环**
+//                ★ 清残留绝不能用 session 模式：那时 hosts 正是脏的那份，
+//                  备份下来就等于「把脏的当原始内容」，最后还原时又写回去了。
+function makePlan({ mode, sid, hostsText, restoreText, exes, endsAt, now }, paths) {
   return {
+    mode: (mode === 'restore') ? 'restore' : 'session',
     sid: String(sid || ''),
     hostsPath: paths.hostsPath,
     hostsText: typeof hostsText === 'string' ? hostsText : null,
@@ -240,6 +247,7 @@ function createElevator(overrides = {}) {
   // Task 7 开始专注时就是走这个。
   function plan(input = {}) {
     return makePlan({
+      mode: input.mode,
       sid: input.sid,
       hostsText: input.hostsText,
       restoreText: input.restoreText,
