@@ -132,8 +132,25 @@ function adviceFor(level, info = {}) {
     + '发现网站还能打开，就去它的设置里关掉。';
 }
 
-// ---------- 探测层（可注入，好测）----------
+// 要不要为了「安全 DNS」**弹一个抢焦点的窗口**（Task 9）？
+//
+// 这是一个刻意保守的选择，只有**确认开着**才弹：
+//   'on'      → 弹。这是真风险：hosts 屏蔽会被整个绕过，主人必须知道，
+//               而且这事「不说就等于骗他」——他会以为专注在挡。
+//   'unknown' → **不弹**。这一条最反直觉，但很重要：
+//               真机上（Chrome/Edge 装了、但配置里没有这一项）永远是这个状态，
+//               每次开始专注都弹 = 训练主人闭眼点掉。
+//               一个被闭眼点掉的警告，比没有警告更坏 ——
+//               真正出事那天他也会闭眼点掉。
+//               设置页里那条常驻横幅已经够了（就在「开始专注」按钮上方）。
+//   'off'     → 不弹。没什么可说的。
+//
+// ★ 别把 'unknown' 改成「也弹一下比较保险」。保险的做法是**别浪费他的注意力**。
+function shouldPopupForDoh(level) {
+  return level === 'on';
+}
 
+// ---------- 探测层（可注入，好测）----------
 const CHROMIUM_BROWSERS = [
   { name: 'Chrome', parts: ['Google', 'Chrome', 'User Data'] },
   { name: 'Edge', parts: ['Microsoft', 'Edge', 'User Data'] },
@@ -297,6 +314,7 @@ module.exports = {
   prefsHasDoh,
   mergeLevels,
   adviceFor,
+  shouldPopupForDoh,
   createDetector,
   detectDoh,
 };

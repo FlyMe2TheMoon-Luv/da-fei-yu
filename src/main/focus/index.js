@@ -56,11 +56,16 @@ let options = {
 
 let onChange = null;   // 会话状态变了就喊一声（由 main.js 注入）
 let onTick = null;     // 专注进行中每次轮询也喊一声（桌宠据此校正剩余时间）
+let onBlocked = null;  // 拦下了东西（关掉一个软件）→ 让桌宠说一句人话（Task 9）
 let tickHandle = null;
 let inited = false;
 
 // 最近一次「安全 DNS」检测结果（给界面看）
 let lastDoh = null;
+
+// 助手上次报的「已关掉几个」。用来发现**新**关掉的动作 ——
+// 助手的心跳里本来就带着这个数（focus-hb.json 的 killed），不用另开一条通道。
+let lastKilledCount = 0;
 
 // 计划文件用的路径（沙箱时 hostsPath 指向假文件）
 function planPaths() {
@@ -98,6 +103,17 @@ function emitTick() {
     onTick(state());
   } catch (err) {
     console.error('[focus] 通知专注心跳失败：', err && err.message);
+  }
+}
+
+// 拦下了东西（目前只有「关掉一个软件」这一种）→ 让桌宠说一句人话。
+// 桌宠才是主人真正在看的那个东西；系统错误弹窗只会让人觉得「这软件坏了」。
+function emitBlocked(info) {
+  if (typeof onBlocked !== 'function') return;
+  try {
+    onBlocked(info);
+  } catch (err) {
+    console.error('[focus] 通知「拦下了东西」失败：', err && err.message);
   }
 }
 
@@ -249,6 +265,10 @@ async function start({ minutes } = {}) {
   cfg.session = session;
   cfg.lastMinutes = session.minutes;
   persist(cfg);
+
+  // 助手那边是新的一个进程，计数从 0 开始 —— 这里也要跟着归零，
+  // 否则上一趟关过 3 个、这一趟关第 1 个时会被当成「没有新动作」而漏报。
+  lastKilledCount = 0;
 
   lastDoh = dohInfo;
   startTick();
@@ -410,7 +430,40 @@ function tick() {
     stop('done');   // 到点自动结束（界面关着也照样结束）
     return;
   }
+
+  // 助手关掉了新东西吗？→ 让桌宠说一句人话。
+  // 数据来源是助手本来就写的心跳（focus-hb.json 里的 killed 计数），
+  // **不需要另开一条通道** —— 助手是提权进程，通道越少越好。
+  // ⚠ 只在「计数变多」时才说，不然每 5 秒都要说一次（那就不叫提醒了，叫骚扰）。
+  checkBlocked(cfg.session);
+
   emitTick();       // 还在专注：报个心跳，让桌宠校正角标
+}
+
+// 看一眼助手有没有新关掉东西。全程不许抛异常 —— 它跑在轮询里，
+// 抛了会让「到点自动结束」这一步永远执行不到（专注就结束不了了）。
+function checkBlocked(session) {
+  let hb = null;
+  try { hb = elevator.readHeartbeat(); } catch { return; }
+
+  if (!hb || typeof hb !== 'object') return;
+  // 会话号对不上就当没看见（别把上一趟的计数算到这一趟头上）
+  if (session && session.sid && hb.sid && String(hb.sid) !== String(session.sid)) return;
+
+  const killed = Number(hb.killed);
+  if (!Number.isFinite(killed) || killed <= 0) return;
+  if (killed <= lastKilledCount) return;
+
+  const delta = killed - lastKilledCount;
+  lastKilledCount = killed;
+
+  const leftMs = timer.remainingMs(session, Date.now());
+  emitBlocked({
+    count: delta,
+    total: killed,
+    leftMs,
+    leftMinutes: Math.max(0, Math.ceil(leftMs / 60000)),
+  });
 }
 
 function startTick() {
@@ -431,6 +484,7 @@ function stopTick() {
 function init(o = {}) {
   if (typeof o.onChange === 'function') onChange = o.onChange;
   if (typeof o.onTick === 'function') onTick = o.onTick;
+  if (typeof o.onBlocked === 'function') onBlocked = o.onBlocked;
   if (typeof o.elevate === 'boolean') options.elevate = o.elevate;
   if (typeof o.hostsPath === 'string' && o.hostsPath) options.hostsPath = o.hostsPath;
   if (inited) return;
@@ -482,6 +536,8 @@ module.exports = {
   residue,
   cleanupResidue,
   recoverIfDirty,
+  // Task 9 起：拦下东西时通知桌宠（自检要能直接调它验这一条）
+  checkBlocked,
   hostsPath: () => options.hostsPath,
   // 计划文件的真实路径（沙箱里也在 userData 下）。
   // 给自检用：它是「主进程 → 助手」唯一的契约，值得被真的读出来看一眼。

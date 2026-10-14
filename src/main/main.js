@@ -21,6 +21,7 @@ const reminder = require('./reminder');
 const settingsWindow = require('./settings-window');
 const chatWindow = require('./chat-window');
 const focus = require('./focus');           // v3 专注模式主控（Task 4 起：只计时，不碰系统）
+const focusNotice = require('./focus-notice'); // v3 专注模式·拦截提示窗口（Task 9，focusable 窗口）
 const week = require('./week');             // 周视图自检要拿它做交叉验证
 const { placeNear } = require('./place');   // 自检里要复算一遍设置窗口该待的位置
 const brain = require('./brain');
@@ -235,6 +236,9 @@ function createWindow() {
       finish: finishExitTest,
       settingsWindow,
       focus,
+      // Task 9：拦截提示窗口 + 提醒气泡 —— 自检要拿两者的 focusable 做对照
+      focusNotice,
+      reminder,
     }), 1500);
   }
 
@@ -460,6 +464,18 @@ function notifyPetFocus(phase) {
     win.webContents.send('focus:notify', payload);
   } catch (err) {
     console.error('[main] 通知桌宠专注状态失败：', err && err.message);
+  }
+}
+
+// 专注期间「拦下了东西」（关掉一个分心软件）→ 让桌宠说一句人话（Task 9）。
+//   ★ 和 notifyPetFocus 分开：那个是状态心跳（每几秒一次），这个只在**真有动作**时推，
+//     所以渲染进程收到就该说话，不需要自己去重。
+function notifyPetBlocked(info) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    win.webContents.send('focus:blocked', info || {});
+  } catch (err) {
+    console.error('[main] 通知桌宠「拦下东西」失败：', err && err.message);
   }
 }
 
@@ -2488,6 +2504,21 @@ if (!gotLock) {
     // 这里只把「桌宠窗口在哪」告诉它（它自己拿不到）。
     reminder.init({ getPetWindow: () => win });
 
+    // 阶段 3·Task 9：拦截提示窗口 —— 贴着桌宠弹一张小卡片，让主人**看见并做选择**
+    //   （安全 DNS 开着时提醒「专注可能没用」；拦下东西时也可以在这里露个面）。
+    //   ★ 它和气泡窗口正好相反：气泡 focusable:false + showInactive()（不打断打字），
+    //     这个窗口 focusable:true + show()+focus()（就是要主人看见并点）。
+    //   ★ onChoose：选「先去关掉」= 这趟专注没意义（hosts 屏蔽被安全 DNS 绕过），停掉并还原。
+    focusNotice.init({
+      getPetWindow: () => win,
+      onChoose: (which) => {
+        if (which === 'secondary') {
+          try { focus.stop('doh-dismiss'); } catch (err) { console.error('[main] 关掉专注失败：', err && err.message); }
+        }
+        // primary（仍要开始）：什么都不做，专注继续。
+      },
+    });
+
     // 阶段 2-4：日程管理窗口（按需打开，不占内存）。
     // 「预览提醒效果」按钮直接复用提醒呈现那套，看到的和真到点时一模一样。
     settingsWindow.init({
@@ -2522,6 +2553,8 @@ if (!gotLock) {
       },
       // 每 5 秒一次的心跳：让桌宠把剩余时间角标校正过来
       onTick: () => notifyPetFocus('tick'),
+      // Task 9：刚拦下一个分心软件 → 让桌宠说一句（只在数量变多时才触发）
+      onBlocked: (info) => notifyPetBlocked(info),
     });
 
     // 启动兜底：上次专注没正常结束的话，hosts 里可能还留着指向 0.0.0.0 的块，

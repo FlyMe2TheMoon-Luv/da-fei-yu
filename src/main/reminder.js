@@ -324,7 +324,9 @@ async function debugBubble() {
     })()`);
   } catch { /* 网页还没准备好 */ }
 
-  return { exists: true, visible: b.isVisible(), dom, bounds: b.getBounds() };
+  // focusable 是 Task 9 加的：拦截提示窗口必须是 true、气泡必须是 false，
+  // 两个值必须**不一样**（自检里就是这么对照的，别把气泡也改成 focusable:true）。
+  return { exists: true, visible: b.isVisible(), focusable: b.isFocusable(), dom, bounds: b.getBounds() };
 }
 
 module.exports = {

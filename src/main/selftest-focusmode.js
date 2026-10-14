@@ -28,7 +28,7 @@ const hosts = require('./focus/hosts');
 
 module.exports = {
   async run(ctx) {
-    const { win: petWin, log, finish, sleep, settingsWindow, focus } = ctx;
+    const { win: petWin, log, finish, sleep, settingsWindow, focus, focusNotice, reminder } = ctx;
     log('===== 专注模式自检开始（阶段 3 · Task 5 · 地基版）=====');
 
     let pass = 0;
@@ -334,8 +334,73 @@ module.exports = {
         ok(focus.state().exes.length === 0, '名单也清干净了');
       }
 
-      // ===== ⑧ 清理 =====
-      log('\n⑧ 清理');
+      // ===== ⑧ 拦截提示窗口（Task 9）=====
+      // 这个窗口和提醒气泡的**焦点策略正好相反**：
+      //   气泡 focusable:false + showInactive()（顺口说一声，不打断打字）；
+      //   提示窗口 focusable:true + show()（要主人停下来看一眼、做个选择）。
+      // 所以这一段的核心是一条**负对照**：两个窗口的 focusable 必须不一样 ——
+      //   防的是「有人把窗口参数照抄串了」，那会让提示被静默吞掉，
+      //   主人以为屏蔽生效了、其实压根没看见（比不提示更坏）。
+      log('\n⑧ 拦截提示窗口（Task 9）：focusable 必须和气泡相反');
+      {
+        const r = await focusNotice.notify({
+          kind: 'warn',
+          head: '专注可能没用',
+          title: '自检提示：安全 DNS 开着',
+          message: '这是自检造出来的一条提示，用来验证窗口行为。',
+          primaryLabel: '仍要开始',
+          secondaryLabel: '先去关掉',
+        });
+        ok(r && r.shown === true, '★ 提示真的弹出来了（notify 返回 shown:true）',
+          r ? ` → ${JSON.stringify(r)}` : '');
+        await sleep(300);
+
+        const dn = await focusNotice.debugNotice();
+        ok(dn.exists === true, '★ 提示窗口真的建出来了');
+        ok(dn.visible === true, '★ 提示窗口真的可见（不是建了没显示）');
+        ok(dn.focusable === true,
+          '★★ 提示窗口 focusable === true（要主人看见并做选择，不能静默）',
+          ` → ${dn.focusable}`);
+        ok(!!dn.dom && dn.dom.title === '自检提示：安全 DNS 开着',
+          '★ 卡片上的标题和传进去的一致（走 textContent，不是 innerHTML）',
+          dn.dom ? ` → ${dn.dom.title}` : '');
+        ok(!!dn.dom && dn.dom.warn === true, '★ kind=warn → 卡片是警示配色');
+        ok(!!dn.dom && dn.dom.secondaryShown === true,
+          '★ 两个按钮都在（secondaryLabel 非空时必须显示）');
+
+        // ---- ★ 负对照：气泡窗口的 focusable 必须是 false，且和提示窗口不同 ----
+        // 气泡只在桌宠露脸时才冒出来（它贴在桌宠旁边），所以先确认桌宠是可见的。
+        if (petWin && !petWin.isDestroyed() && !petWin.isVisible()) petWin.showInactive();
+        try {
+          await reminder.present({ title: '自检气泡' }, new Date());
+          await sleep(400);
+        } catch (err) {
+          log(`  （气泡没弹出来：${(err && err.message) || err}）`);
+        }
+        const db = await reminder.debugBubble();
+        ok(db && db.exists === true, '★ 气泡窗口真的开出来了（负对照的前提成立）', true);
+        ok(db && db.focusable === false,
+          '★★ 负对照：气泡窗口 focusable === false（顺口说一声，不打断主人打字）', true);
+        ok(dn.focusable !== (db && db.focusable),
+          '★★ 负对照：两个窗口的 focusable 必须**不一样**（防参数照抄串了）', true);
+
+        // ---- 收尾：点一下「仍要开始」，验证按钮回调真的把窗口收起来 ----
+        // 自检里没有真的鼠标，直接触发渲染进程里的按钮点击（走的还是那条 IPC）。
+        try {
+          await focusNotice.getNoticeWindow().webContents.executeJavaScript(
+            `(() => { const b = document.getElementById('btn-primary'); if (b) b.click(); return true; })()`
+          );
+          await sleep(300);
+        } catch (err) {
+          log(`  （点按钮出错：${(err && err.message) || err}）`);
+        }
+        ok(focusNotice.isShowing() === false, '★ 点了「仍要开始」→ 提示窗口收起来了');
+        reminder.hideBubble('selftest');
+        await sleep(200);
+      }
+
+      // ===== ⑨ 清理 =====
+      log('\n⑨ 清理');
       focus.setBlacklist({ domains: [], exes: [] });
       ok(focus.state().session === null, '没有残留的专注会话');
       ok(focus.state().domains.length === 0, '黑名单也清空了');

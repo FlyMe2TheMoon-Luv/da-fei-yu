@@ -11,9 +11,10 @@
   另加了「桌面双击快捷方式」（主人不依赖小安也能开关桌宠），也已完成。
   **v2（周视图 + 聊天）也已完成**（2026-10-13，14 个 Task，全量回归全绿）。
   **下一步：阶段 3 专注模式**（设计已拍板，见 `PLAN-V3-专注模式.md`，10 个 Task）。
-  **进度：Task 1–8 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
-  宠物陪伴 / 提权壳+常驻助手 / 禁网站落地 / 禁软件落地）。**下一步 Task 9 拦截提示窗口**。
-  ⚠ Task 6–8 是「动系统」的部分，**代码和自检都完成了，但真机验收还没做**
+  **进度：Task 1–9 已完成**（黑名单纯函数 / 计时状态机 / hosts 文本操作 / 专注界面 /
+  宠物陪伴 / 提权壳+常驻助手 / 禁网站落地 / 禁软件落地 / 拦截提示窗口）。
+  **下一步 Task 10：文档 + 全量回归 + 主人真机验收（10 条清单）**。
+  ⚠ Task 6–9 里「动系统」的部分，**代码和自检都完成了，但真机验收还没做**
   （UAC 弹窗、网站真打不开、记事本真被关 —— 这三件事沙箱里验不了，只能主人点）。
 - **阶段 3 专注模式的关键约定**（别改错）：
   - 拦截分两段：**改 hosts 挡网站** + **轮询杀进程挡软件**。整段专注**只弹一次 UAC** ——
@@ -84,9 +85,9 @@
   `make-launcher`（生成桌面双击快捷方式 + 图标）/
   **纯 Node 自检**：`test:schedules`（63）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
   `test:quit`（8）/ `test:week`（53）/ `test:nl-time`（23）/ `test:brain-local`（19）/ `test:brain-cloud`（18）/
-  `test:brain-router`（19）/ `test:focus-blacklist`（76）/ `test:focus-timer`（34）/ `test:focus-hosts`（94）/
+  `test:brain-router`（19）/ `test:focus-blacklist`（76）/ `test:focus-timer`（34）/ `test:focus-hosts`（99）/
   `test:focus-elevate`（81）/ `test:focus-helper`（51，**真跑 .ps1，不提权**）/ `test:focus-intercept`（47）/
-  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（47）/ `test:reminder-e2e`（19）/
+  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（58）/ `test:reminder-e2e`（19）/
   `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
   `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。
   ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），批量统计要用 `grep -E "(结果|结束)："`。
@@ -99,8 +100,15 @@
 - 排查约定（血泪）：**不能靠 `sendInputEvent` 合成拖拽**——Electron 合成鼠标事件的
   `screenX/screenY 恒为 0`；`Add-Type` 被安全策略拦，**无法程序化驱动真实鼠标**。
   拖拽类问题只能靠主进程问系统光标位置，或人工拖一次。
-- **三个窗口的焦点策略各不相同**（别照抄）：桌宠 `focusable:false`、气泡 `focusable:false`、
-  设置窗口**必须能抢焦点**。桌宠/气泡显示一律用 `showInactive()`，**别写 `show()`**。
+- **四个窗口的焦点策略各不相同**（别照抄）：桌宠 `focusable:false`、提醒气泡 `focusable:false`、
+  **专注提示窗口 `focusable:true`**、设置窗口**必须能抢焦点**。
+  桌宠/气泡显示一律用 `showInactive()`（**别写 `show()`**）；
+  专注提示窗口（`src/main/focus-notice.js`）反过来：`show()`+`focus()`，因为要主人**看见并点按钮**。
+  ★ 自检钉了负对照：提示窗口 `focusable===true` **且** 气泡 `focusable===false`，**两个值必须不一样**
+  （防参数照抄串了，会让提示被静默吞掉）。
+- **弹窗策略 `doh.shouldPopupForDoh(level)`：只在 `'on'` 时弹** —— `'unknown'` 不弹。
+  真机上（装了浏览器但配置没这一项）永远 unknown，每次都弹会训练主人「闭眼点掉」，
+  被闭眼点掉的警告比没警告更坏。设置页那条常驻横幅已经够了。
 - **摆窗口位置**用 `src/main/place.js`（纯函数，刻意不 require electron 好单测）。
   别用「超出最少」兜底（会把窗口甩到离宠物几百像素外），要用「夹进工作区的 up-right 当靶心 + 优先不压住桌宠」。
 - **带标题栏的窗口在 1.5 倍缩放下「外框尺寸会自己飘」**：`new BrowserWindow(480×640)` →

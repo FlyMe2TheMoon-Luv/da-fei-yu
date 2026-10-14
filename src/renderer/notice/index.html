@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 提示窗口只显示本地内容，不需要 eval，CSP 收紧到最小 -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
+  <title>专注模式</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: transparent;   /* 窗口透明，圆角靠卡片自己画 */
+      overflow: hidden;
+      font-family: "Microsoft YaHei", system-ui, sans-serif;
+      user-select: none;
+      cursor: default;
+    }
+
+    #card {
+      position: absolute;
+      inset: 0;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      padding: 15px 18px 14px;
+      background: rgba(255, 255, 255, .98);
+      border: 1px solid rgba(0, 0, 0, .08);
+      border-radius: 16px;
+      box-shadow: 0 10px 34px rgba(0, 0, 0, .22);
+      overflow: hidden;
+      animation: pop .2s ease-out;
+    }
+    @keyframes pop {
+      from { transform: translateY(9px) scale(.95); opacity: 0 }
+      to   { transform: none; opacity: 1 }
+    }
+
+    /* 左边一条竖色条：一眼看出是「提醒」还是「警告」 */
+    #card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 4px;
+      background: #3b82f6;
+    }
+    #card.warn::before  { background: #f59e0b; }
+    #card.warn          { border-color: rgba(245, 158, 11, .35); }
+
+    #head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .8px;
+      color: #9ca3af;
+    }
+    #card.warn #head { color: #b45309; }
+
+    #title {
+      margin-top: 7px;
+      font-size: 17px;
+      font-weight: 600;
+      color: #111827;
+      line-height: 1.35;
+    }
+
+    #msg {
+      margin-top: 7px;
+      flex: 1;
+      font-size: 13px;
+      line-height: 1.6;
+      color: #4b5563;
+      white-space: pre-wrap;   /* 主进程给换行就照着换行 */
+      overflow-y: auto;
+    }
+
+    #foot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    button {
+      border: none;
+      border-radius: 9px;
+      padding: 8px 17px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    button:active { transform: translateY(1px); }
+    button.primary   { background: #3b82f6; color: #fff; }
+    button.primary:hover { background: #2563eb; }
+    button.secondary { background: #f1f5f9; color: #334155; }
+    button.secondary:hover { background: #e2e8f0; }
+    button.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="card">
+    <div id="head">专注模式</div>
+    <div id="title">—</div>
+    <div id="msg"></div>
+    <div id="foot">
+      <button id="btn-secondary" class="secondary hidden"></button>
+      <button id="btn-primary" class="primary">我知道了</button>
+    </div>
+  </div>
+  <script src="./notice.js"></script>
+</body>
+</html>

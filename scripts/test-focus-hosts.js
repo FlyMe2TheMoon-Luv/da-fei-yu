@@ -349,6 +349,24 @@ section('13. createDetector：假世界里复现真机情况');
   okNeg(d6 && typeof d6.advice === 'string', '★ 炸了也要给出一句人话，不能返回空');
 }
 
+// ---------- 14. shouldPopupForDoh：什么时候才值得弹窗打扰主人 ----------
+// 这是一个**策略**函数（不是技术函数）：弹窗会打断主人，弹多了主人就学会闭眼点掉，
+// 真需要看的那次反而看不见了。所以口径必须是「只在**确认开着**时才弹」。
+section('14. shouldPopupForDoh：只在确认开着时才弹窗');
+{
+  ok(doh.shouldPopupForDoh('on') === true,
+    '安全 DNS 确认开着 → 要弹窗（hosts 屏蔽会被整个绕过，不提醒等于白做）');
+  // ★ 负对照三连：只有 'on' 才配弹窗，其余一律不弹
+  okNeg(doh.shouldPopupForDoh('off') === false,
+    '★ 负对照：确认关着 → 不许弹（没毛病就别打扰主人）');
+  okNeg(doh.shouldPopupForDoh('unknown') === false,
+    '★ 负对照：不知道 → 不许弹（真机上最常见，乱弹会训练出「闭眼点掉」）');
+  okNeg(doh.shouldPopupForDoh(undefined) === false,
+    '★ 负对照：坏输入 undefined → 不许弹、不许崩');
+  okNeg(doh.shouldPopupForDoh('ON') === false,
+    '★ 负对照：大小写不对（ON）→ 不许当「开着」（口径是严格相等）');
+}
+
 // ---------- 汇总 ----------
 console.log(`\n负对照：${negPass}/${negTotal} 通过`);
 console.log(`===== 结果：${pass} 通过 / ${fail} 失败 =====`);

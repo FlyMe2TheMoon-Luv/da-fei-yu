@@ -23,6 +23,8 @@ const schedules = require('./schedules');
 const week = require('./week');
 const focus = require('./focus');
 const blacklist = require('./focus/blacklist');
+const doh = require('./focus/doh');
+const focusNotice = require('./focus-notice');
 const { placeNear } = require('./place');
 
 const HTML = path.join(__dirname, '..', 'renderer', 'settings', 'index.html');
@@ -404,7 +406,28 @@ function init(opts = {}) {
   });
   // ⚠ focus:start 现在是**异步**的（要等主人点 UAC）。
   //   ipcMain.handle 会自动 await 它返回的 Promise，界面那边不用改。
-  ipcMain.handle('focus:start', (_e, opts) => focus.start(opts || {}));
+  ipcMain.handle('focus:start', async (_e, opts) => {
+    const r = await focus.start(opts || {});
+    // ★ Task 9：安全 DNS 开着 → hosts 屏蔽会被浏览器整个绕过，专注白做。
+    //   只在**确认开着**（level==='on'）时才弹警告 —— 'unknown' 在真机上太常见，
+    //   乱弹会让主人养成「闭眼点掉」的习惯，真需要看的时候反而看不见了。
+    //   专注此刻已经开始了；选「先去关掉」时由 main.js 的 onChoose 停掉并还原 hosts。
+    try {
+      if (r && r.ok && r.doh && doh.shouldPopupForDoh(r.doh.level)) {
+        focusNotice.notify({
+          kind: 'warn',
+          head: '专注可能没用',
+          title: '检测到「安全 DNS」是开着的',
+          message: r.doh.advice,
+          primaryLabel: '仍要开始',
+          secondaryLabel: '先去关掉',
+        });
+      }
+    } catch (err) {
+      console.error('[settings] 弹专注提示失败：', err && err.message);
+    }
+    return r;
+  });
   // 「结束专注」要报「按下那一刻」——够没够 3 秒由 focus/requestStop 判（规则只有一处）
   ipcMain.handle('focus:stop', (_e, payload) => focus.requestStop(payload || {}));
   // 倒计时刷新用（和 focus:get 同源，单独留一个语义清晰的通道）

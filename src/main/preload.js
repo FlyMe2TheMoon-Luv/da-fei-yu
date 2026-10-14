@@ -61,6 +61,14 @@ contextBridge.exposeInMainWorld('petAPI', {
     ipcRenderer.on('focus:notify', handler);
     return () => ipcRenderer.removeListener('focus:notify', handler);
   },
+  // 拦下了东西（关掉一个分心软件）→ 让桌宠说一句人话（Task 9）。
+  // ★ 只在**数量变多**时主进程才推，所以这里不用自己去重。
+  onBlocked: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const handler = (_e, info) => cb(info);
+    ipcRenderer.on('focus:blocked', handler);
+    return () => ipcRenderer.removeListener('focus:blocked', handler);
+  },
   // 启动时主动问一次：桌宠重开时如果主人还在专注，要接着陪
   getFocusState: () => ipcRenderer.invoke('pet:focus-state'),
 });

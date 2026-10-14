@@ -322,9 +322,26 @@ function onFocusNotify(model, payload) {
   }
 }
 
+// 主进程推来「刚刚拦下了东西」：说一句人话，让主人知道真的在挡（Task 9）。
+//   ★ info.count 是「这一趟专注累计关掉几个」，不是这一下的增量 ——
+//     但主进程只在增量 > 0 时才推，所以每次收到都值得说一句。
+function onBlockedNotify(model, info) {
+  const p = info || {};
+  const n = Number.isFinite(p.count) ? p.count : 0;
+  const left = Number.isFinite(p.leftMinutes) ? p.leftMinutes : null;
+  let line = n > 0 ? `我帮你关掉了 ${n} 个分心的软件～` : '我帮你挡掉一个分心的东西～';
+  if (left !== null) line += ` 还有 ${left} 分钟，加油！`;
+  say(line);
+  log(`拦下东西：累计 ${n} 个`);
+}
+
 function setupFocus(model) {
   if (!window.petAPI || !window.petAPI.onFocus) return;
   window.petAPI.onFocus((payload) => onFocusNotify(model, payload));
+  // 「拦下东西」是另一条通道（只在真的有动作时推），别和上面的状态心跳混在一起
+  if (window.petAPI.onBlocked) {
+    window.petAPI.onBlocked((info) => onBlockedNotify(model, info));
+  }
 
   // 启动时主动问一次：桌宠重开时如果主人还在专注，要接着陪（而不是等下次状态变化）
   if (window.petAPI.getFocusState) {
