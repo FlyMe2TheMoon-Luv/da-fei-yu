@@ -224,6 +224,20 @@ function createWindow() {
     }), 1500);
   }
 
+  // 开发自检：专注模式端到端（见 selftest-focusmode.js）。
+  // ⚠ 名字必须是 focusmode，不能叫 focus —— `--selftest=focus` 已经被
+  //   「桌宠不抢焦点」那个自检占了（见 PLAN-V3 的「命名冲突」一节）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'focusmode') {
+    setTimeout(() => require('./selftest-focusmode').run({
+      win,
+      log,
+      sleep,
+      finish: finishExitTest,
+      settingsWindow,
+      focus,
+    }), 1500);
+  }
+
   // 开发自检：桌宠不抢焦点（见 runFocusSelfTest）。
   if (!app.isPackaged && process.env.PET_SELFTEST === 'focus') {
     setTimeout(runFocusSelfTest, 1200);
@@ -416,6 +430,47 @@ ipcMain.on('pet:open-settings', () => settingsWindow.open());
 
 // 桌宠身上的「聊天」按钮 → 打开/关闭聊天条
 ipcMain.on('pet:open-chat', () => chatWindow.toggle());
+
+// ---------- 专注模式：把状态推给桌宠（v3 · Task 5）----------
+//
+// 桌宠要「陪着专注」：开始时换姿态说话、专注中显示剩余时间角标、结束说句鼓励。
+// 这里负责把 focus 主控的状态翻译成桌宠听得懂的 payload 推过去。
+//
+// ⚠ 只在「开始 / 结束」两个瞬间推（phase 由上一个状态算出来），
+//   改黑名单之类的中间变化不打扰桌宠 —— 否则她会被无关事件反复打断。
+let petFocusRunning = false;
+
+function notifyPetFocus(phase) {
+  if (!win || win.isDestroyed()) return;
+  let st;
+  try {
+    st = focus.state();
+  } catch (err) {
+    console.error('[main] 读专注状态失败：', err && err.message);
+    return;
+  }
+  const payload = {
+    phase,                                              // 'start' | 'tick' | 'end'
+    running: st.running,
+    endsAt: st.session ? st.session.endsAt : null,
+    minutes: st.session ? st.session.minutes : null,
+    remainingMs: st.remainingMs,
+  };
+  try {
+    win.webContents.send('focus:notify', payload);
+  } catch (err) {
+    console.error('[main] 通知桌宠专注状态失败：', err && err.message);
+  }
+}
+
+// 桌宠启动时会问一句「现在在专注吗」——桌宠重开时若还在专注，要接着陪。
+ipcMain.handle('pet:focus-state', () => {
+  try {
+    return focus.state();
+  } catch {
+    return { running: false, session: null };
+  }
+});
 
 // ---------- 聊天记录 ----------
 const CHAT_FILE = 'chat.json';
@@ -2387,10 +2442,16 @@ if (!gotLock) {
     // 第一段（Task 4）只做「计时 + 配置」，完全不碰系统；
     // 会话状态一变就广播一声 —— Task 5 的宠物陪伴会接在这里换姿态、说话。
     focus.init({
+      // 开始 / 结束：换姿态、说话
       onChange: (st) => {
-        // 现在只是打条日志；Task 5 起这里会通知桌宠
+        const wasRunning = petFocusRunning;
+        petFocusRunning = st.running;
         console.log(`[main] 专注状态变化：${st.running ? `进行中（还剩 ${Math.round(st.remainingMs / 1000)} 秒）` : '未专注'}`);
+        if (st.running && !wasRunning) notifyPetFocus('start');
+        else if (!st.running && wasRunning) notifyPetFocus('end');
       },
+      // 每 5 秒一次的心跳：让桌宠把剩余时间角标校正过来
+      onTick: () => notifyPetFocus('tick'),
     });
 
     // 开发便利：启动时直接把日程管理窗口开出来，方便做视觉验收 / 截图。

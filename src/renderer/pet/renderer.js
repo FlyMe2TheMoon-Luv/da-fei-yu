@@ -44,6 +44,11 @@ const EXPRESSIONS = ['爱心眼', '星星眼', '脸红', '吐舌', '调皮', '�
 const hint = document.getElementById('hint');
 const log = (m) => console.log('[pet] ' + m);
 
+// 给自检看的「桌宠现在是什么状态」。
+// ⚠ 必须在最顶层就建好 —— 自检可能在模型还没加载完时就来读它，
+//   建在 async 主流程里的话会读到 undefined（断言会假失败）。
+window.__petState = { mode: 'idle', endsAt: null, remainingMs: 0 };
+
 // 把界面控件层（#ui）的尺寸对齐到画布，让按钮贴着**角色**而不是贴着窗口。
 //
 // 起因：主人报「按住桌宠拖动时，右上角的设置按钮会自动右移，跟角色对不上」。
@@ -194,6 +199,147 @@ function setupReminder(model) {
   });
 }
 
+// ---------- 专注模式：宠物陪伴（v3 · Task 5）----------
+//
+// 主进程在专注开始 / 进行中 / 结束时推事件过来，这里让角色：
+//   · 开始时换个表情、放个动作、说一句「好，我陪你 25 分钟～」
+//   · 专注中在左上角显示一个「专注中 MM:SS」角标
+//   · 结束时说一句鼓励、恢复常态
+//
+// ── 为什么角标的时间由这里自己算，而不是等主进程每秒推 ──
+//   主进程只推「结束时刻」（endsAt），这里每秒用 `endsAt - Date.now()` 重算。
+//   电脑睡一觉再醒，Date.now() 一跳，剩余时间立刻就对 —— 不会像「每秒自减」那样算丢。
+//   （和 timer.js 里 remainingMs 的写法同一个道理。）
+//
+// ── 为什么表情要一直挂着（而不是像提醒那样 4 秒就收）──
+//   提醒是「响一下就完」，专注是「这段时间她都在陪你」，所以表情保持到结束。
+//   这里**不动** autoInteract —— 视线跟随一直留着，她才不像个死物。
+const FOCUS_EXPRESSION = '开心兴奋';   // 进入专注：精神一点
+const FOCUS_MOTION = 'splash';        // 有明显肢体动作的（和提醒用的是同一组）
+const FOCUS_END_EXPRESSION = '爱心眼'; // 结束：给个甜甜的表情
+const SAY_MS = 4200;                  // 一句话显示多久
+
+let focusRunning = false;
+let focusEndsAt = null;
+let focusBadgeTimer = null;
+let focusSayTimer = null;
+let focusHits = 0;   // 自检用：收到几次「专注开始」（收到 ≠ 发出）
+
+function focusBadgeEl() { return document.getElementById('focus-badge'); }
+function focusBadgeTimeEl() { return document.getElementById('focus-badge-time'); }
+
+function updateFocusBadge() {
+  const t = focusBadgeTimeEl();
+  if (!t) return;
+  const left = focusEndsAt ? Math.max(0, focusEndsAt - Date.now()) : 0;
+  const total = Math.ceil(left / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  t.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  window.__petState.remainingMs = left;
+}
+
+function setFocusBadge(on) {
+  const b = focusBadgeEl();
+  if (b) b.classList.toggle('hidden', !on);
+}
+
+// 让角色「说」一句话（底部小气泡，几秒后自己淡出）
+function say(text, ms = SAY_MS) {
+  const el = document.getElementById('pet-say');
+  if (!el) return;
+  clearTimeout(focusSayTimer);
+  el.textContent = text;         // ★ textContent：台词是我们自己写的，但也别用 innerHTML
+  el.classList.remove('hidden');
+  // 下一帧再加 .show，否则 display:none → block 和 opacity 过渡挤在同一帧，动画不生效
+  requestAnimationFrame(() => el.classList.add('show'));
+  focusSayTimer = setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => { if (!el.classList.contains('show')) el.classList.add('hidden'); }, 300);
+  }, ms);
+}
+
+function enterFocus(model, payload) {
+  focusRunning = true;
+  focusHits++;
+  focusEndsAt = Number.isFinite(payload && payload.endsAt) ? payload.endsAt : null;
+
+  setFocusBadge(true);
+  updateFocusBadge();
+  clearInterval(focusBadgeTimer);
+  focusBadgeTimer = setInterval(updateFocusBadge, 1000);
+
+  window.__petState.mode = 'focus';
+  window.__petState.endsAt = focusEndsAt;
+
+  // 换姿态：给个表情 + 放个动作（动作放完会自己回 idle）
+  try { model.expression(FOCUS_EXPRESSION).catch(() => {}); } catch { /* 表情名不存在就只说话 */ }
+  try { model.motion(FOCUS_MOTION).catch(() => {}); } catch { /* 动作组不存在就算了 */ }
+
+  const min = payload && payload.minutes;
+  say(min ? `好，我陪你 ${min} 分钟～` : '好，我陪着你～');
+  log(`进入专注陪伴${min ? `（${min} 分钟）` : ''}`);
+}
+
+function exitFocus(model) {
+  focusRunning = false;
+  focusEndsAt = null;
+  clearInterval(focusBadgeTimer);
+  focusBadgeTimer = null;
+  setFocusBadge(false);
+
+  window.__petState.mode = 'idle';
+  window.__petState.endsAt = null;
+  window.__petState.remainingMs = 0;
+
+  try { model.expression(FOCUS_END_EXPRESSION).catch(() => {}); } catch { /* 忽略 */ }
+  say('专注结束，辛苦啦！');
+
+  // 表情挂一会儿再收回，免得「结束」看着像什么都没发生
+  clearTimeout(exitFocus._t);
+  exitFocus._t = setTimeout(() => {
+    try {
+      const em = model.internalModel.motionManager.expressionManager;
+      if (em && typeof em.resetExpression === 'function') em.resetExpression();
+    } catch { /* 忽略 */ }
+  }, SAY_MS);
+
+  log('专注结束，恢复常态');
+}
+
+// 主进程推来的专注事件
+function onFocusNotify(model, payload) {
+  const p = payload || {};
+  if (p.running) {
+    if (!focusRunning) enterFocus(model, p);
+    else {
+      // 已经在专注里（比如主进程每隔几秒推一次）→ 只校正结束时刻，别重复说话/放动作
+      if (Number.isFinite(p.endsAt)) focusEndsAt = p.endsAt;
+      updateFocusBadge();
+    }
+  } else if (focusRunning) {
+    exitFocus(model);
+  }
+}
+
+function setupFocus(model) {
+  if (!window.petAPI || !window.petAPI.onFocus) return;
+  window.petAPI.onFocus((payload) => onFocusNotify(model, payload));
+
+  // 启动时主动问一次：桌宠重开时如果主人还在专注，要接着陪（而不是等下次状态变化）
+  if (window.petAPI.getFocusState) {
+    window.petAPI.getFocusState().then((st) => {
+      if (st && st.running) {
+        onFocusNotify(model, {
+          running: true,
+          endsAt: st.session ? st.session.endsAt : null,
+          minutes: st.session ? st.session.minutes : null,
+        });
+      }
+    }).catch(() => { /* 问不到就当没在专注 */ });
+  }
+}
+
 // ---------- 主流程 ----------
 
 (async () => {
@@ -241,6 +387,7 @@ function setupReminder(model) {
     const interactions = setupInteractions(app, model);
     setupTopButtons();
     setupReminder(model);
+    setupFocus(model);   // v3：专注模式的宠物陪伴
 
     // ===== 6. 启动后盯一会儿边缘，确认动作没把角色顶出窗口 =====
     watchEdges(app);
@@ -268,6 +415,22 @@ function setupReminder(model) {
         hits: () => menuHits,
         reset: () => { menuHits = 0; },
         suppress: (on) => { suppressMenu = !!on; },
+      },
+      // 自检用：专注陪伴状态（收到几次「专注开始」+ 现在的状态）
+      focus: {
+        hits: () => focusHits,
+        reset: () => { focusHits = 0; },
+        state: () => ({
+          mode: window.__petState.mode,
+          endsAt: window.__petState.endsAt,
+          hits: focusHits,   // ★ 收到几次「专注开始」——自检要拿它证明「真的收到了」
+          badgeVisible: !!(focusBadgeEl() && !focusBadgeEl().classList.contains('hidden')),
+          badgeText: focusBadgeTimeEl() ? focusBadgeTimeEl().textContent : null,
+          sayText: (() => {
+            const el = document.getElementById('pet-say');
+            return el && el.classList.contains('show') ? el.textContent : null;
+          })(),
+        }),
       },
     };
 

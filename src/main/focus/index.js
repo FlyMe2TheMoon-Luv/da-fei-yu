@@ -31,6 +31,7 @@ const { sanitizeBlacklist } = require('./blacklist');
 const TICK_MS = 5000;
 
 let onChange = null;   // 会话状态变了就喊一声（由 main.js 注入）
+let onTick = null;     // 专注进行中每次轮询也喊一声（桌宠据此校正剩余时间）
 let tickHandle = null;
 let inited = false;
 
@@ -52,6 +53,17 @@ function emit() {
     onChange(state());
   } catch (err) {
     console.error('[focus] 通知会话变化失败：', err && err.message);
+  }
+}
+
+// 专注进行中的「心跳」：每轮轮询喊一次，让桌宠把剩余时间角标校正过来。
+// 和 emit() 分开，是因为它「开始 / 结束」才响一次，而这个是每 5 秒响一次。
+function emitTick() {
+  if (typeof onTick !== 'function') return;
+  try {
+    onTick(state());
+  } catch (err) {
+    console.error('[focus] 通知专注心跳失败：', err && err.message);
   }
 }
 
@@ -177,7 +189,9 @@ function tick() {
   if (!cfg.session) { stopTick(); return; }
   if (timer.isDone(cfg.session, Date.now())) {
     stop('done');   // 到点自动结束（界面关着也照样结束）
+    return;
   }
+  emitTick();       // 还在专注：报个心跳，让桌宠校正角标
 }
 
 function startTick() {
@@ -197,6 +211,7 @@ function stopTick() {
 
 function init(opts = {}) {
   if (typeof opts.onChange === 'function') onChange = opts.onChange;
+  if (typeof opts.onTick === 'function') onTick = opts.onTick;
   if (inited) return;
   inited = true;
 

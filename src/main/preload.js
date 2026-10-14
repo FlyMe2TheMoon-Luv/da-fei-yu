@@ -52,4 +52,15 @@ contextBridge.exposeInMainWorld('petAPI', {
     ipcRenderer.on('reminder:notify', handler);
     return () => ipcRenderer.removeListener('reminder:notify', handler);
   },
+
+  // ---- 专注模式（v3）：宠物陪伴 ----
+  // 专注开始 / 进行中 / 结束时主进程推过来，让角色换姿态、说话、显示剩余时间角标。
+  onFocus: (cb) => {
+    if (typeof cb !== 'function') return () => {};
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('focus:notify', handler);
+    return () => ipcRenderer.removeListener('focus:notify', handler);
+  },
+  // 启动时主动问一次：桌宠重开时如果主人还在专注，要接着陪
+  getFocusState: () => ipcRenderer.invoke('pet:focus-state'),
 });
