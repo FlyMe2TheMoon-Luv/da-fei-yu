@@ -25,6 +25,7 @@ const focus = require('./focus');
 const blacklist = require('./focus/blacklist');
 const doh = require('./focus/doh');
 const focusNotice = require('./focus-notice');
+const apps = require('./apps');
 const { placeNear } = require('./place');
 
 const HTML = path.join(__dirname, '..', 'renderer', 'settings', 'index.html');
@@ -48,6 +49,9 @@ let mode = 'list';         // 'list' | 'week' | 'focus'
 let onPreview = null;      // 由 main.js 注入：点「预览提醒效果」时调 reminder.present
 let getPetWindow = () => null; // 由 main.js 注入：要临时把桌宠「降一层」
 let getChatWindow = () => null; // 由 main.js 注入：设置窗口打开时聊天条也要降层
+
+// v4 批次 1：已安装软件列表的缓存（一次会话只扫一次 —— 见 apps:list 的注释）
+const appsCache = apps.createCache();
 
 // ---------- 窗口尺寸 ----------
 
@@ -432,6 +436,49 @@ function init(opts = {}) {
   ipcMain.handle('focus:stop', (_e, payload) => focus.requestStop(payload || {}));
   // 倒计时刷新用（和 focus:get 同源，单独留一个语义清晰的通道）
   ipcMain.handle('focus:state', () => focus.state());
+
+  // ---- v4 批次 1 · 已安装软件选择器 ----
+  //
+  // 「点图标就能加进黑名单」—— 列表和图标都在主进程出。
+  // ⚠ 图标必须走这里：app.getFileIcon 是主进程 API，渲染进程拿不到
+  //   （我们的 renderer 不开 nodeIntegration）。图标转成 base64 传字符串，
+  //   因为渲染进程 CSP 是 default-src 'none'，传文件路径会被直接拦掉。
+  //
+  // ★ 一次会话只扫一次（106 个 .lnk，每个都要读盘 + 提图标，重扫会明显卡）。
+  //   缓存是模块级的，窗口来回开关也不会失效 —— 开始菜单里的软件很少变。
+  ipcMain.handle('apps:list', async () => {
+    try {
+      const list = await appsCache.get(() => apps.scanInstalled({
+        deps: {
+          // 提图标：Electron 内置 API，不需要新依赖。
+          // 提不出来的会落到界面画的「首字母色块」兜底（见 PLAN-V4 第二节）。
+          getIcon: (p) => app.getFileIcon(p, { size: 'large' }),
+          // 保护名单复用黑名单那一套：绝不能让主人把自己或系统进程加进来
+          isProtectedExe: blacklist.isProtectedExe,
+        },
+      }));
+      // 顺便告诉界面「哪些已经在黑名单里了」，好把那些标成「已加入」
+      const taken = apps.takenSet(focus.state().exes);
+      return {
+        ok: true,
+        apps: list.map((x) => ({
+          name: x.name,
+          exe: x.exe,
+          icon: x.icon,
+          blocked: x.blocked,
+          added: !!x.exe && taken.has(x.exe),
+        })),
+      };
+    } catch (err) {
+      console.error('[settings] 扫已安装软件失败：', err && err.message);
+      return { ok: false, error: '没能读到已安装软件列表' };
+    }
+  });
+  // 主人手动点「重新扫描」（比如刚装了新软件）时清掉缓存
+  ipcMain.handle('apps:rescan', () => {
+    appsCache.clear();
+    return { ok: true };
+  });
 
   // ---- 预览提醒效果 ----
   ipcMain.handle('reminder:preview', async () => {

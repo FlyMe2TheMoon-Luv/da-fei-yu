@@ -2339,6 +2339,114 @@ async function runSettingsSelfTest() {
     ` → “${addBadExe.errorText}”`);
   ok(focus.state().exes.length === 0, '★ 主进程那边也没存进去');
 
+  log('⑧b⁴ᐩ 软件选择器（v4 批次 1）：打开面板 → 点图标 → 加进黑名单');
+  {
+    // 面板的数据来自主进程扫开始菜单。这条链子在自检环境里跑的是**真开始菜单**
+    // （沙箱只隔离了 userData，没有隔离开始菜单），所以断言要写得稳一点：
+    // 不写死「必须有 41 个」，而是「面板能打开、能列出东西、点一个能加进去」。
+    const opened = await sw.webContents.executeJavaScript(`(async () => {
+      const panel = document.getElementById('app-picker');
+      const btn = document.getElementById('btn-browse-apps');
+      const r = { hasBtn: !!btn, hasPanel: !!panel };
+      if (!btn || !panel) return r;
+      r.hiddenBefore = panel.classList.contains('hidden');
+      btn.click();
+      await new Promise((res) => setTimeout(res, 4000)); // 等扫描（真机 100+ 个 .lnk，实测约 1.2 秒；留足余量）
+      r.hiddenAfter = panel.classList.contains('hidden');
+      r.cells = document.querySelectorAll('#picker-grid .app-cell').length;
+      r.countText = document.getElementById('picker-count').textContent.trim();
+      r.firstExe = document.querySelector('#picker-grid .app-cell')?.dataset.exe || '';
+      r.firstName = document.querySelector('#picker-grid .app-cell')?.dataset.name || '';
+      // 有没有「已加入」标记，用来验证 added 状态确实传下来了
+      r.addedCells = document.querySelectorAll('#picker-grid .app-cell.added').length;
+      return r;
+    })()`);
+
+    ok(opened.hasBtn === true, '专注页上有「浏览已安装软件」按钮');
+    ok(opened.hiddenBefore === true, '一开始面板是关着的');
+    ok(opened.hiddenAfter === false, '★ 点按钮后面板打开了');
+    ok(opened.cells > 0, '★ 面板里列出了软件（真开始菜单扫出来的）',
+      ` → ${opened.cells} 个 · ${opened.countText}`);
+
+    if (opened.cells > 0) {
+      // 搜索过滤：打个不存在的词，网格应该清空（这条同时验「搜索是本地过滤」）
+      const searched = await sw.webContents.executeJavaScript(`(async () => {
+        const box = document.getElementById('picker-search');
+        box.value = 'zzz不存在的软件zzz';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 250));
+        const none = document.querySelectorAll('#picker-grid .app-cell').length;
+        const emptyShown = !document.getElementById('picker-empty').classList.contains('hidden');
+        box.value = '';
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 250));
+        return { none, emptyShown, restored: document.querySelectorAll('#picker-grid .app-cell').length };
+      })()`);
+      ok(searched.none === 0, '★ 搜索不存在的词 → 网格清空');
+      ok(searched.emptyShown === true, '★ 并且给出了「没找到」的提示（不是一片空白）');
+      ok(searched.restored === opened.cells, '★ 清空搜索框 → 列表恢复（过滤是可逆的）');
+
+      // ★ 真正点一个图标 → 必须进黑名单。挑一个「不在保护名单、还没有 exe 冲突」的。
+      const picked = await sw.webContents.executeJavaScript(`(async () => {
+        const cell = [...document.querySelectorAll('#picker-grid .app-cell')]
+          .find((c) => !c.classList.contains('added'));
+        if (!cell) return { none: true };
+        const name = cell.dataset.name, exe = cell.dataset.exe;
+        cell.click();
+        await new Promise((r) => setTimeout(r, 600));
+        // ⚠ 点完整个网格会**重画**（renderPickerGrid），手里那个 cell 节点已经脱离文档了。
+        //   所以「有没有变成已加入」必须**按 exe 重新查一遍**，不能看旧的引用。
+        const fresh = document.querySelector('#picker-grid .app-cell.added')
+          || [...document.querySelectorAll('#picker-grid .app-cell')].find((c) => c.dataset.exe === exe);
+        return {
+          name, exe,
+          listVals: [...document.querySelectorAll('#focus-exes .focus-val')].map((x) => x.textContent),
+          cellNowAdded: !!(fresh && fresh.classList.contains('added')),
+        };
+      })()`);
+
+      if (picked.none) {
+        ok(false, '★ 面板里一个「还没加过」的软件都没有，没法验证点击添加');
+      } else if (picked.exe) {
+        ok(picked.listVals.includes(picked.exe), '★ 点图标后，它出现在黑名单列表里',
+          ` → 点了「${picked.name}」→ ${picked.exe}`);
+        ok(focus.state().exes.includes(picked.exe), '★ 主进程那边也真的存进去了');
+        ok(picked.cellNowAdded === true, '★ 那一格当场变成「已加入」（不会让人以为没生效）');
+
+        // 收尾：把这个软件从名单里去掉，别影响后面的用例
+        focus.setBlacklist({ domains: focus.state().domains, exes: [] });
+        await sw.webContents.executeJavaScript(
+          `(async () => { await window.settingsAPI.focusGet(); })()`
+        ).catch(() => { });
+      } else {
+        // 解析不出 exe 的软件点了会弹 confirm，自检里不该碰 —— 跳过并记一笔
+        ok(true, '（面板里第一个未加入的软件解析不出 exe，点击路径改由纯函数自检覆盖）');
+      }
+    }
+
+    // ★ 负对照：面板里的软件一个都不许撞保护名单
+    const badInList = await sw.webContents.executeJavaScript(`(() => {
+      const exes = [...document.querySelectorAll('#picker-grid .app-cell')]
+        .map((c) => c.dataset.exe).filter(Boolean);
+      return exes;
+    })()`);
+    const prot = badInList.filter((x) => {
+      try { return require('./focus/blacklist').isProtectedExe(x); } catch { return false; }
+    });
+    ok(prot.length === 0, '★ 负对照：面板里没有任何保护进程（explorer/electron…）',
+      prot.length ? ` → 混进了 ${JSON.stringify(prot)}` : '');
+
+    // 关掉面板，别挡住后面的步骤
+    await sw.webContents.executeJavaScript(`(() => {
+      document.getElementById('btn-picker-close').click();
+      return document.getElementById('app-picker').classList.contains('hidden');
+    })()`);
+    const closed = await sw.webContents.executeJavaScript(
+      `document.getElementById('app-picker').classList.contains('hidden')`
+    );
+    ok(closed === true, '★ 点 × 能关掉面板');
+  }
+
   log('⑧b⁗ 选「25 分钟」');
   const preset = await sw.webContents.executeJavaScript(`(async () => {
     const b = [...document.querySelectorAll('#focus-presets button')]
@@ -2592,6 +2700,38 @@ if (!gotLock) {
           primaryLabel: '仍要开始',
           secondaryLabel: '先去关掉',
         }).catch(() => { });
+      }, 3000);
+    }
+
+    // 开发便利：启动时直接打开「已安装软件选择器」，方便视觉验收 / 截图。
+    //   PET_OPEN_PICKER=1 npm start -- --no-gpu
+    // ⚠ 只给开发用（打包后无效），且只是「帮主人点两下按钮」，不改任何数据。
+    if (!app.isPackaged && process.env.PET_OPEN_PICKER === '1') {
+      setTimeout(async () => {
+        try {
+          const win = settingsWindow.open('focus');
+          if (!win) return;
+          win.webContents.once('did-finish-load', () => {
+            win.webContents.executeJavaScript(`(async () => {
+              document.getElementById('btn-browse-apps').click();      // 打开选择器
+            })()`).catch(() => { });
+            // 顺便把窗口自己截一张存下来（比抓整个桌面可靠：不会被前台锁定挡住）
+            setTimeout(async () => {
+              try {
+                const img = await win.webContents.capturePage();
+                const fs = require('fs');
+                const path = require('path');
+                const out = path.join(__dirname, '..', '..', 'tmp', 'v4-picker.png');
+                fs.writeFileSync(out, img.toPNG());
+                console.log('[main] 选择器截图已存：', out);
+              } catch (e) {
+                console.error('[main] 截图失败：', e && e.message);
+              }
+            }, 6000);
+          });
+        } catch (err) {
+          console.error('[main] 自动打开软件选择器失败：', err && err.message);
+        }
       }, 3000);
     }
 

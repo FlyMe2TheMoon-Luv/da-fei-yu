@@ -47,4 +47,12 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   focusStart: (opts) => ipcRenderer.invoke('focus:start', opts),
   // payload = { pressedAt }：按下「结束专注」那一刻的时间戳（主进程据此判断够没够 3 秒）
   focusStop: (payload) => ipcRenderer.invoke('focus:stop', payload),
+
+  // ---- 已安装软件选择器（v4 批次 1）----
+  // 拿「机器上装了哪些软件」：名字 + 进程名 + 图标（base64）。
+  // ⚠ 图标是主进程提的（app.getFileIcon 渲染进程用不了），
+  //   传回来的是 data:image/png;base64,... 字符串 —— CSP 只允许内联图片。
+  appsList: () => ipcRenderer.invoke('apps:list'),
+  // 主人点「重新扫描」（比如刚装了新软件）—— 让主进程把缓存清掉再扫
+  appsRescan: () => ipcRenderer.invoke('apps:rescan'),
 });

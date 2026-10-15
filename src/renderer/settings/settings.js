@@ -46,6 +46,17 @@ const el = {
   fExeInput: document.getElementById('f-exe-input'),
   btnAddExe: document.getElementById('btn-add-exe'),
   focusExes: document.getElementById('focus-exes'),
+  // v4 批次 1：已安装软件选择器
+  btnBrowseApps: document.getElementById('btn-browse-apps'),
+  appPicker: document.getElementById('app-picker'),
+  pickerPanel: document.querySelector('.picker-panel'),
+  btnPickerClose: document.getElementById('btn-picker-close'),
+  pickerSearch: document.getElementById('picker-search'),
+  pickerGrid: document.getElementById('picker-grid'),
+  pickerEmpty: document.getElementById('picker-empty'),
+  pickerCount: document.getElementById('picker-count'),
+  pickerHint: document.getElementById('picker-hint'),
+  btnPickerRescan: document.getElementById('btn-picker-rescan'),
   focusError: document.getElementById('focus-error'),
   focusDoh: document.getElementById('focus-doh'),
   focusPresets: document.getElementById('focus-presets'),
@@ -79,6 +90,11 @@ let draftExes = [];        // 界面上的黑名单草稿（软件）
 let countdownTimer = null; // 专注中每秒刷新倒计时的定时器
 let holdTimer = null;      // 「长按结束」的计时器
 let holdStart = null;      // 「长按结束」按下那一刻
+
+// ---- 软件选择器（v4 批次 1）----
+let installedApps = null;  // 最近一次从主进程拿到的「已安装软件」列表（null = 还没扫）
+let appsLoading = false;   // 正在扫（防连点两次按钮）
+let pickerFilter = '';     // 搜索框里的关键词
 
 // 每小时的像素高度。方块的位置和高度都由这个值乘出来 ——
 // 比例是主进程算的（week.js），像素才是界面的事。
@@ -653,6 +669,198 @@ function endHold(completed) {
   if (completed) el.focusStopHint.textContent = '';
 }
 
+// ---------- 已安装软件选择器（v4 批次 1）----------
+//
+// 主人不用再记 `steam.exe` 怎么拼了 —— 打开面板，点图标就能加。
+//
+// ⚠ 这个面板**自己能做的事很少**：
+//   「你电脑上装了哪些软件」「哪些已经加过」「哪些拦不住」——
+//   全部是主进程扫出来、算好之后送过来的。这里只负责画 + 把点击递上去。
+//   一旦这里自己判「哪些软件该出现」，就会和主进程的过滤规则长歪。
+
+// 按名字给兜底色块挑一个稳定的颜色。
+// ★ 同一个软件每次打开都该是同一个色（和桌宠那套周视图取色同思路）。
+//   为什么不用图标？因为有些软件（Office 部分组件 / 解析不出 exe 的）
+//   提不出图标 —— 与其留个空洞，不如给一个认得出的色块。
+const SWATCH = ['#3b82f6', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6', '#22c55e', '#fb7185', '#0ea5e9'];
+function swatchFor(name) {
+  let h = 0;
+  const s = String(name || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return SWATCH[h % SWATCH.length];
+}
+
+// 一个软件格子：图标（提不到就画首字母）+ 名字 + 可选的小标记
+function buildAppCell(app) {
+  const cell = document.createElement('button');
+  cell.type = 'button';
+  cell.className = 'app-cell' + (app.added ? ' added' : '');
+  cell.dataset.exe = app.exe || '';
+  cell.dataset.name = app.name || '';
+  if (app.added) cell.title = '已经在名单里了';
+
+  const icon = document.createElement('div');
+  icon.className = 'app-icon';
+  if (app.icon) {
+    // ⚠ 图标是主进程提的 base64 data URL（CSP 只允许内联图片，不能传路径）。
+    //   用 createElement + src 赋值，绝不拼 innerHTML。
+    const img = document.createElement('img');
+    img.src = app.icon;
+    img.alt = '';
+    icon.appendChild(img);
+  } else {
+    // ★ 兜底：提不到图标就画首字母色块 —— 不能留空洞
+    icon.style.background = swatchFor(app.name);
+    icon.textContent = (String(app.name || '?').trim()[0] || '?').toUpperCase();
+  }
+
+  const name = document.createElement('span');
+  name.className = 'app-name';
+  name.textContent = app.name || '(无名)'; // ★ 一律 textContent：软件名不是我们写的
+  name.title = app.name || '';
+
+  cell.append(icon, name);
+
+  // 「点了可能拦不住」——如实标出来，不假装能用
+  if (app.blocked) {
+    const warn = document.createElement('span');
+    warn.className = 'app-warn';
+    warn.textContent = '⚠ 没找到程序文件';
+    warn.title = '这个快捷方式里没有程序路径，加进名单可能不起作用';
+    cell.appendChild(warn);
+  }
+
+  if (!app.added) {
+    cell.addEventListener('click', () => pickApp(app));
+  }
+  return cell;
+}
+
+// 按搜索词过滤（只在界面上过滤，不动主进程那份数据 —— 搜索不该触发重扫）
+function renderPickerGrid() {
+  const kw = pickerFilter.trim().toLowerCase();
+  const list = Array.isArray(installedApps) ? installedApps : [];
+  const shown = kw
+    ? list.filter((a) => String(a.name).toLowerCase().includes(kw) || String(a.exe).toLowerCase().includes(kw))
+    : list;
+
+  el.pickerGrid.textContent = '';
+  for (const a of shown) el.pickerGrid.appendChild(buildAppCell(a));
+
+  const none = shown.length === 0;
+  el.pickerEmpty.classList.toggle('hidden', !none);
+  el.pickerEmpty.textContent = kw
+    ? `没找到「${pickerFilter.trim()}」。换个词试试？`
+    : (list.length ? '这台电脑上没扫到软件。' : '还没扫到东西。');
+
+  const addedN = list.filter((a) => a.added).length;
+  el.pickerCount.textContent = `${list.length} 个软件 · 已加 ${addedN} 个`;
+}
+
+// 打开面板：先开（有个正在加载的样子），再去主进程要数据。
+async function openAppPicker() {
+  el.appPicker.classList.remove('hidden');
+  el.pickerSearch.value = '';
+  pickerFilter = '';
+
+  if (installedApps) {
+    // 已经有缓存（主进程一次会话只扫一次）→ 立刻画出来，不闪
+    renderPickerGrid();
+    el.pickerSearch.focus();
+    return;
+  }
+
+  el.pickerGrid.textContent = '';
+  el.pickerEmpty.classList.add('hidden');
+  el.pickerCount.textContent = '';
+  el.pickerHint.textContent = '正在看这台电脑上装了哪些软件…（第一次会慢一两秒）';
+
+  await loadInstalledApps();
+  el.pickerSearch.focus();
+}
+
+async function loadInstalledApps() {
+  if (appsLoading) return;
+  appsLoading = true;
+  try {
+    const res = await api.appsList();
+    if (!res || res.ok === false) {
+      installedApps = [];
+      el.pickerHint.textContent = (res && res.error) || '没能读到软件列表';
+    } else {
+      installedApps = Array.isArray(res.apps) ? res.apps : [];
+      el.pickerHint.textContent = '这些是你电脑上装了的软件。点一个就加进名单。';
+    }
+  } catch {
+    installedApps = [];
+    el.pickerHint.textContent = '扫软件列表时出错了';
+  } finally {
+    appsLoading = false;
+  }
+  renderPickerGrid();
+}
+
+function closeAppPicker() {
+  el.appPicker.classList.add('hidden');
+}
+
+// 点了一个软件 → 加进黑名单。
+// ⚠ 「加完到底成不成功」以主进程的返回为准（和手动输入那条路走的是同一个接口）。
+async function pickApp(app) {
+  if (!app || app.added) return;
+
+  // ★ 拦不住的那些：先问一句，别让主人以为加上了就没事了。
+  if (app.blocked) {
+    const yes = window.confirm(
+      `「${app.name}」这个快捷方式里没找到程序文件，加进名单**可能拦不住它**。\n\n还是要加吗？`
+    );
+    if (!yes) return;
+  }
+
+  // 解析不出 exe 的，进程名是空的 —— 这时只能老老实实告诉主人加不了。
+  if (!app.exe) {
+    toast('这个软件找不到程序文件，暂时加不进名单');
+    return;
+  }
+
+  const res = await api.focusSetBlacklist({
+    domains: draftDomains,
+    exes: [...draftExes, app.exe],
+  });
+  if (!res || res.ok === false) {
+    showFocusError((res && res.error) || '没能加上，稍后再试');
+    return;
+  }
+  hideFocusError();
+
+  // 主进程可能拒收（比如撞上保护名单）——那 exes 里就不会有它，如实说清楚
+  const saved = (res.exes || []).includes(app.exe);
+  focusData = Object.assign({}, focusData, { domains: res.domains, exes: res.exes });
+  draftDomains = res.domains.slice();
+  draftExes = res.exes.slice();
+  renderFocusLists();
+
+  if (!saved) {
+    toast(`「${app.name}」没能加进去（可能撞上了保护名单）`);
+    return;
+  }
+
+  // 本地面板也要同步成「已加入」，不然会让人以为没生效
+  const hit = (installedApps || []).find((a) => a.exe === app.exe);
+  if (hit) hit.added = true;
+  renderPickerGrid();
+  toast(`已挡住「${app.name}」`);
+}
+
+// 重新扫描：清掉主进程的缓存再扫一遍（装了新软件时用得上）
+async function rescanApps() {
+  if (appsLoading) return;
+  el.pickerHint.textContent = '正在重新扫描…';
+  try { await api.appsRescan(); } catch { /* 清缓存失败就还按旧的扫，别卡住 */ }
+  installedApps = null;
+  await loadInstalledApps();
+}
+
 // ---------- 单个日程的操作 ----------
 
 async function onToggle(it) {
@@ -794,6 +1002,25 @@ el.btnAddDomain.addEventListener('click', () => addFocusItem('domain'));
 el.btnAddExe.addEventListener('click', () => addFocusItem('exe'));
 el.btnCustomOk.addEventListener('click', applyCustomMinutes);
 el.btnFocusStart.addEventListener('click', startFocus);
+
+// ---- 软件选择器（v4 批次 1）----
+el.btnBrowseApps.addEventListener('click', openAppPicker);
+el.btnPickerClose.addEventListener('click', closeAppPicker);
+el.btnPickerRescan.addEventListener('click', rescanApps);
+// 点面板外面的灰底 = 关掉（和大多数弹窗一致的习惯）
+el.appPicker.addEventListener('click', (e) => {
+  if (e.target === el.appPicker) closeAppPicker();
+});
+// 搜索框：打字即过滤（数据已经在本地，不用再问主进程）
+el.pickerSearch.addEventListener('input', () => {
+  pickerFilter = el.pickerSearch.value;
+  renderPickerGrid();
+});
+// Esc 关面板。⚠ 要抢在「表单的 Esc = 取消编辑」前面处理，
+//   否则面板开着按 Esc 会去关那个没打开的表单（看起来像「没反应」）。
+el.appPicker.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAppPicker(); }
+});
 
 // 回车 = 加一条（填网址 / 程序名时最顺手）
 for (const [input, kind] of [[el.fDomainInput, 'domain'], [el.fExeInput, 'exe']]) {

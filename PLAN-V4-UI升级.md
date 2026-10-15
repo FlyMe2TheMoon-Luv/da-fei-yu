@@ -124,21 +124,33 @@ src/renderer/settings/     ← 界面：软件选择器（不碰系统，通过 
 
 ## 三、分批计划
 
-### 批次 1 · 软件选择器（先做这个）
+### 批次 1 · 软件选择器（先做这个）✅ **已完成（2026-10-15），等主人确认**
 
 **目标：** 专注页的「软件」那一行，加一个「浏览已安装软件」按钮 →
 弹出选择面板 → 点图标即加入黑名单。
 
-| # | 做什么 | 文件 |
-|---|---|---|
-| 1-1 | 纯函数：解析 lnk 二进制捞 exe 路径 | `src/main/apps.js` |
-| 1-2 | 纯函数：扫描目录 → 列表（去重 + 过滤 + 排序） | `src/main/apps.js` |
-| 1-3 | 主进程：提图标 → base64（含兜底链 + 缓存） | `src/main/apps.js` |
-| 1-4 | IPC：`apps:list` / `apps:icon` | `src/main/preload.js` + `main.js` |
-| 1-5 | 界面：选择面板（搜索框 + 网格 + 点击添加） | `src/renderer/settings/*` |
-| 1-6 | 自检：纯 Node（解析/去重/过滤/保护名单）+ e2e（选择器能开、点了能加） | `scripts/test-apps.js` + `selftest-*.js` |
+| # | 做什么 | 文件 | 状态 |
+|---|---|---|---|
+| 1-1 | 纯函数：解析 lnk 二进制捞 exe 路径 | `src/main/apps.js` | ✅ |
+| 1-2 | 纯函数：扫描目录 → 列表（去重 + 过滤 + 排序） | `src/main/apps.js` | ✅ |
+| 1-3 | 主进程：提图标 → base64（含兜底链 + 缓存） | `src/main/apps.js` | ✅ |
+| 1-4 | IPC：`apps:list` / `apps:rescan` | `src/main/preload-settings.js` + `settings-window.js` | ✅ |
+| 1-5 | 界面：选择面板（搜索框 + 网格 + 点击添加） | `src/renderer/settings/*` | ✅ |
+| 1-6 | 自检：纯 Node（解析/去重/过滤/保护名单）+ e2e（选择器能开、点了能加） | `scripts/test-apps.js` + `main.js` ⑧b⁴ᐩ | ✅ |
 
 **验收：** 主人点开选择器 → 看到软件图标网格 → 点一个 → 出现在黑名单里。
+
+**实测结果：** 106 个 `.lnk` → **41 条真软件**；微信 / QQ / Steam / WeGame / 英雄联盟 /
+哔哩哔哩直播姬 / Telegram / UU加速器 / 蒲公英游戏版全在，exe 名正确。
+自检：`test:apps` 105（负对照 28）/ `settings-e2e` 125 / `focusmode-e2e` 60，全绿。
+截图：`tmp/v4-picker.png`。
+
+**过程中改掉的设计（实测逼出来的，已同步到第二节）：**
+- 系统工具 / `.msc` / `.html` 文档 / 卸载项 / Windows 外壳入口 → 全部滤掉（否则列表里会冒出「注册表编辑器」）
+- 解析不出 exe 的**真软件**（Riot 系）→ 保留 + 标 `⚠️`
+- 41 个图标**串行 5.3 秒 → 8 路并发 1.2 秒**（扫+解析只要 46ms）
+
+**⏸ 停在这里等主人确认，才开工批次 2。**
 
 ---
 

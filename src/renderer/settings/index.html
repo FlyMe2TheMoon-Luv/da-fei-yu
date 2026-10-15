@@ -596,6 +596,197 @@
       background: #fef2f2;
       border-color: var(--danger);
     }
+
+    /* ---------- 已安装软件选择器（v4 批次 1） ---------- */
+    .browse-btn {
+      width: 100%;
+      margin-top: 8px;
+      padding: 8px 0;
+      font-size: 13px;
+    }
+
+    #app-picker {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(15, 23, 42, .38);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #app-picker.hidden { display: none; }
+
+    /* 关闭动画：面板「收回去」。素材是 grid 从触发按钮长出来的第一版，
+       真正的弹簧留到批次 3（这一版只做「不突兀」）。 */
+    .picker-panel {
+      width: 100%;
+      max-width: 560px;
+      max-height: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 18px 48px rgba(15, 23, 42, .28);
+      overflow: hidden;
+      animation: picker-pop .18s cubic-bezier(.32, .72, 0, 1);
+    }
+    @keyframes picker-pop {
+      from { opacity: 0; transform: scale(.96) translateY(6px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .picker-head {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px 0;
+    }
+    .picker-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .picker-close {
+      flex: none;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      font-size: 17px;
+      line-height: 1;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .picker-close:hover { background: #f1f3f5; color: var(--text); }
+
+    .picker-hint {
+      flex: none;
+      margin: 6px 16px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .picker-search {
+      flex: none;
+      margin: 0 16px 12px;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+    }
+    .picker-search:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, .13);
+    }
+
+    .picker-grid {
+      flex: 1;
+      min-height: 120px;
+      overflow-y: auto;
+      padding: 0 12px 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 6px;
+      align-content: start;
+    }
+
+    /* 一个软件一格：图标在上、名字在下。点一下 = 加进黑名单 */
+    .app-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 6px 8px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: transparent;
+      cursor: pointer;
+      text-align: center;
+    }
+    .app-cell:hover { background: #f4f6f9; border-color: var(--line); }
+    .app-cell:active { transform: translateY(1px); }
+
+    /* ★ 按下即响应：不等松手（apple-design「响应」原则） */
+    .app-cell .app-icon {
+      width: 34px;
+      height: 34px;
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+      background: #94a3b8; /* 兜底色；JS 会按名字换成具体颜色 */
+    }
+    .app-cell .app-icon img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .app-cell .app-name {
+      font-size: 11.5px;
+      line-height: 1.35;
+      color: var(--text);
+      width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    /* 「已经加过了」：变淡 + 打钩 + 不能点 */
+    .app-cell.added {
+      opacity: .55;
+      cursor: default;
+      background: #f8fafc;
+      border-color: var(--line);
+    }
+    .app-cell.added .app-name::after {
+      content: " ✓";
+      color: var(--ok);
+      font-weight: 600;
+    }
+    /* 「拦不住」的标记：如实告诉主人，不假装能用 */
+    .app-cell .app-warn {
+      font-size: 10px;
+      color: #b45309;
+      line-height: 1.2;
+    }
+
+    .picker-empty {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 30px 16px;
+      font-size: 13px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .picker-empty.hidden { display: none; }
+
+    .picker-foot {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .picker-foot button { padding: 5px 11px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -715,6 +906,8 @@
           <input id="f-exe-input" placeholder="比如 steam.exe" autocomplete="off" />
           <button id="btn-add-exe" class="primary" title="加进黑名单">＋</button>
         </div>
+        <!-- v4 批次 1：不用记程序名了，点图标就能加 -->
+        <button id="btn-browse-apps" class="ghost browse-btn">🔍 浏览已安装软件</button>
         <ul id="focus-exes" class="focus-list"></ul>
       </div>
 
@@ -751,6 +944,26 @@
         <p class="focus-hint" id="focus-stop-hint"></p>
       </div>
     </section>
+  </div>
+
+  <!-- 已安装软件选择面板（v4 批次 1）。
+       盖在专注页上的一层浮层：搜索框 + 图标网格，点一个就加进黑名单。
+       ⚠ 这是「次要动线」，关掉的方式要顺手：右上角 ×、点背板、按 Esc 都能关。 -->
+  <div id="app-picker" class="hidden">
+    <div class="picker-panel">
+      <div class="picker-head">
+        <h2>选一个软件挡住</h2>
+        <button id="btn-picker-close" class="picker-close" title="关掉（Esc）" aria-label="关掉">×</button>
+      </div>
+      <p class="picker-hint" id="picker-hint">这些是你电脑上装了的软件。点一个就加进名单。</p>
+      <input id="picker-search" class="picker-search" placeholder="找软件…（打名字就行）" autocomplete="off" />
+      <div id="picker-grid" class="picker-grid"></div>
+      <div id="picker-empty" class="picker-empty hidden"></div>
+      <div class="picker-foot">
+        <span id="picker-count"></span>
+        <button id="btn-picker-rescan" class="ghost">重新扫描</button>
+      </div>
+    </div>
   </div>
 
   <script src="./settings.js"></script>

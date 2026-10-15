@@ -314,6 +314,26 @@ desktop-pet/
     ④ 都不行就把错误码带出来让主人复现 —— **错误码往往直接指向真相**
     （这次 `ERR_INVALID_ARG_TYPE` 一眼就把「文件读不到」翻案成「参数是 undefined」）。
     ★ 相关工具：`npm run check:hosts`（只读体检，报能不能读 / 错误码 / 有没有残留标记块）。
+49. **「异步自检」必须 await 到底再打印结论** —— v4 批次 1 踩到：`test-apps.js` 第 9 节
+    （扫软件 + 缓存）是 `async` 的，但汇总行是**同步**打印的，于是那几条断言**一条都没执行**，
+    而汇总数字看着完全正常（只是悄悄少了几条）。凡是自检里有 `await` / Promise，
+    整段必须包在一个 `async main()` 里、`await` 完再打印「结果：」。
+    ★ 自查办法：数一下「实际打印出来的断言条数」和「你写的断言条数」对不对得上。
+50. **中文过滤规则不能照抄英文那套「词边界」** —— v4 踩到：过滤卸载项时写了
+    `(^|[\s\-_])(uninstall|卸载)([\s\-_.]|$)`，英文的 `Uninstall` 能匹配，
+    可中文的「卸载微信」「卸载火绒」**一条都匹配不上**（中文没有空格当分隔符）。
+    反过来也不能「见到关键词就丢」——`文档编辑器` / `帮助中心` 这种真软件名会被误伤。
+    ★ 所以中文分两档：`卸载` 这种**出现在开头就丢**；`帮助/文档/说明` 这种**只有名字基本就是这几个字**时才丢。
+51. **并发提图标：顺序不能乱、单个失败不能连累整批** —— v4 批次 1：41 个软件串行提图标要 5.3 秒，
+    改成 8 路并发后 1.2 秒（扫 + 解析本来只要 46ms，99% 时间耗在提图标）。
+    ★ 但并发实现里**必须按下标写回数组**，不能按「谁先回来谁先进」——否则列表顺序会随机变。
+    ★ 单个 `getFileIcon` 抛异常只能让那一条 `icon = null`（落到界面色块兜底），不能炸掉整批。
+    ★ 相关工具：`npm run test:apps`（纯函数 + 并发顺序 + 负对照）。
+52. **自检里拿到的 DOM 节点，重画之后就失效了** —— v4 批次 1 踩到：e2e 点了一个软件格子后，
+    去看「那一格有没有变成已加入」，用的是**点击前抓到的那份节点引用**；
+    可点完整个网格会重画，旧节点已经脱离文档，`classList` 自然没变 → 假失败。
+    ★ 规则：凡是「操作后 DOM 会被重画」的地方，断言必须**按标识（如 exe 名）重新查一遍**，
+    不能用旧的节点引用。
 
 ---
 
@@ -342,10 +362,11 @@ npm run test:focus-elevate   # 专注·提权壳 81
 npm run test:focus-helper    # 专注·真跑 focus-helper.ps1（不提权）51
 npm run test:focus-intercept # 专注·系统薄壳 56
 npm run test:focus-wiring    # 专注·接线/默认值（专抓「自检全绿真机挂」）17
+npm run test:apps            # v4·已安装软件扫描（解析 lnk / 过滤 / 并发图标）105
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
-npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页）113
+npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页 + 软件选择器）125
 npm run test:focusmode-e2e   # 专注模式端到端 60
 npm run test:week-e2e        # 周视图端到端 19
 npm run test:chat-e2e        # 聊天端到端 17
@@ -362,6 +383,7 @@ npm run build                # 打包（electron-builder）
 
 开发便利：
 - `PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 启动时自动打开日程管理窗口（`=focus` / `=week` 指定页）
+- `PET_OPEN_PICKER=1 npm start -- --no-gpu` 启动时打开「已安装软件选择器」并**自己截一张图**存到 `tmp/v4-picker.png`（视觉验收用；比抓整个桌面可靠，不会被前台锁定挡住）
 - `PET_OPEN_CHAT=1 npm start -- --no-gpu` 启动时自动打开聊天条
 - `PET_OPEN_NOTICE=1 npm start -- --no-gpu` 启动时自动弹一张「拦截提示」卡片
 （都是做视觉验收 / 截图用）

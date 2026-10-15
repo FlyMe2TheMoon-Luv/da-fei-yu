@@ -8,8 +8,12 @@
 - 位置：`C:\Users\FlyMe\WorkBuddy AI\desktop-pet\`（2026-10-12 从时间戳目录迁来，旧的已弃用）。方案文档 `PLAN.md`，AI 说明书 `CLAUDE.md`。
 - 进度：**阶段 0、1、2、3 全部完成**（3-1 数据层 ✅ / … / 3-9 拦截提示 ✅ / 3-10 文档+回归 ✅）。
   **2026-10-15 真机验收通过**（专注模式跑通：改 hosts 挡网站 + 杀进程挡软件 + 还原）。
-  **下一步：v4 UI 升级 + 软件图标选择器**（见 `PLAN-V4-UI升级.md`，三批：① 选择器 ② 视觉 ③ 动效）。
+  **v4 UI 升级进行中**（见 `PLAN-V4-UI升级.md`，三批：① 选择器 ② 视觉 ③ 动效）。
+  **批次 1（软件图标选择器）已完成，等主人确认**：
+  专注页多了「🔍 浏览已安装软件」→ 面板里点图标即加进黑名单。
+  真机扫出 **41 条真软件**（106 个 .lnk 过滤后），微信/QQ/Steam/WeGame 等都在，exe 名正确。
   ★ 主人 2026-10-15 的三个决策：只做「已安装软件（开始菜单）」/ C 档分 3 批每批截图确认 / 先做选择器。
+  ★ **确认批次 1 之后才开工批次 2（视觉，只换皮），不许自己往下走。**
   阶段 2 之后又按主人反馈做了三处小修（设置窗口摆位 / 按钮更显眼 / 桌宠不抢焦点），也已完成。
   另加了「桌面双击快捷方式」（主人不依赖小安也能开关桌宠），也已完成。
   **v2（周视图 + 聊天）也已完成**（2026-10-13，14 个 Task，全量回归全绿）。
@@ -112,7 +116,8 @@
   `test:brain-router`（19）/ `test:focus-blacklist`（76）/ `test:focus-timer`（34）/ `test:focus-hosts`（99）/
   `test:focus-elevate`（81）/ `test:focus-helper`（51，**真跑 .ps1，不提权**）/ `test:focus-intercept`（56）/
   **`test:focus-wiring`（17，接线/默认值：静态查源码 + 真加载 index.js，专抓「自检全绿真机挂」）** /
-  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（60）/ `test:reminder-e2e`（19）/
+  **`test:apps`（105，v4 已安装软件扫描：解析 lnk / 过滤 / 并发图标 / 负对照 28）** /
+  **Electron 端到端**：`test:settings-e2e`（125）/ `test:focusmode-e2e`（60）/ `test:reminder-e2e`（19）/
   `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
   `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。
   ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），批量统计要用 `grep -E "(结果|结束)："`。
