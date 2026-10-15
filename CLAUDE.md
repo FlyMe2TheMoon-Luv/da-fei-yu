@@ -472,6 +472,17 @@ desktop-pet/
       只写前一半的话，「干脆把动画删掉」照样能过 —— 那正是要防的。
     ★ 验法要用 CDP `Emulation.setEmulatedMedia` **真的把系统设置模拟出来**
       （见 `src/main/selftest-reduced-motion.js`），别只查样式表里有没有那条规则。
+76. **★ 模块顶部 `require('electron')`，等于宣告它「永远没法写单测」** —— v4 批次 4-a：
+    `src/main/store.js` 存的是**用户的全部数据**（日程、专注黑名单、时长预设），
+    可它顶部就 `require('electron')` —— 普通 Node 里 `app` 是 undefined，
+    这个模块**根本 require 不进来**，自检无从下手。结果它长期零测试，
+    而 `focus/store.js` 顶部干脆写了句「别拿它写单测」，把这件事**合理化**了。
+    ★ 修法：把 electron 的取用**延迟到真正需要那一刻**（放进 `baseDir()`），
+      再留一个 `setBaseDir(dir)` 让自检注入临时目录。对外接口一个没改。
+    ★ 推广：**「这个模块没法测」多半不是事实，是它把依赖写死在顶部了**。
+      先问「它是**用的时候**需要，还是**加载的时候**就需要」—— 绝大多数是前者。
+    ★ 另一条：**代码里那句「不方便测，所以不测」的注释是个警报，不是设计说明**。
+      数据层尤其不能没有自检 —— 它坏了不会崩，只会**静默读回空数据**。
 50. **中文过滤规则不能照抄英文那套「词边界」** —— v4 踩到：过滤卸载项时写了
     `(^|[\s\-_])(uninstall|卸载)([\s\-_.]|$)`，英文的 `Uninstall` 能匹配，
     可中文的「卸载微信」「卸载火绒」**一条都匹配不上**（中文没有空格当分隔符）。
@@ -559,7 +570,8 @@ npm run test:week            # 周视图布局纯函数 53
 npm run test:nl-time         # 中文大白话解析 23
 npm run test:spring          # v4·手写弹簧（可打断/速度衔接/帧率无关）40
 npm run test:rubberband      # v4·橡皮筋边界（渐进阻力）21
-npm run test:pet-drag        # v4·拖拽手感（越界阻力/松手落点/滑行状态机）48
+npm run test:pet-drag        # v4·拖拽手感（越界阻力/松手落点/滑行状态机）49
+npm run test:store           # 本地数据读写（往返/兜底/原子写）38
 npm run test:brain-local     # 本地大脑 19
 npm run test:brain-cloud     # 云端大脑 18
 npm run test:brain-router    # 大脑路由 19
@@ -590,7 +602,7 @@ npm run test:exit            # 退出按钮（回归哨兵；会真的退出）
 npm run build                # 打包（electron-builder）
 
 # 收尾一把梭：纯 Node 全部 + 端到端全部，统一汇总（约 4 分 40 秒）
-npm run test:all             # 35 套 / 1396 断言
+npm run test:all             # 36 套 / 1434 断言
 npm run test:changed         # 内循环：只跑跟这次改动有关的套件（秒级）
 ```
 

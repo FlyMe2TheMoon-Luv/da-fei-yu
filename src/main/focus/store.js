@@ -6,8 +6,9 @@
 //   那边能脱离 Electron 单测（scripts/test-focus-blacklist.js）。
 //   本文件只负责「读 / 写 userData/focus.json」这一件事。
 //
-// ⚠ 本文件 require 了 ../store（它 require('electron')），
-//   所以普通 Node 里跑不起来 —— 别拿它写单测。
+// ⚠ 本文件本身很薄，没单独写单测 —— 值得测的「合并默认值 + 挡危险项」
+//   已经在 blacklist.js 里测过了；底下 store.js 的读 / 写 / 兜底 / 原子写
+//   由 scripts/test-store.js 覆盖（批次 4-a 起 store.js 能在普通 Node 里跑了）。
 //
 // 用户数据一律放 app.getPath('userData')，绝不写程序目录（CLAUDE.md 硬性约定 3）。
 

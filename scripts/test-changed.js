@@ -47,6 +47,7 @@ const SUITES = {
   'test:spring': { kind: 'node', desc: '手写弹簧（可打断 / 速度衔接 / 帧率无关）', covers: ['src/main/spring.js'] },
   'test:rubberband': { kind: 'node', desc: '橡皮筋边界（渐进阻力）', covers: ['src/main/rubberband.js'] },
   'test:pet-drag': { kind: 'node', desc: '拖拽手感（越界阻力 / 松手落点 / 滑行状态机）', covers: ['src/main/pet-drag.js'] },
+  'test:store': { kind: 'node', desc: '本地数据读写（往返 / 兜底 / 原子写）', covers: ['src/main/store.js'] },
 
   // —— 聊天大脑 ——
   'test:brain-local': { kind: 'node', desc: '本地聊天规则', covers: ['src/main/brain/local.js'] },
