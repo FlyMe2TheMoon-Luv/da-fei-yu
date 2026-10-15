@@ -7,16 +7,140 @@
         content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:" />
   <title>日程管理</title>
   <style>
+    /* ============================================================
+       v4 批次 2 · 设计 token（只换皮，不动结构）
+       ============================================================
+       目标：把「一堆散落的魔法数字」收成一套**有名字、有理由**的变量。
+
+       ⚠ 这里的旧变量名（--bg / --card / --line / --text / --muted / --primary …）
+         **全部保留**，只是改成指向新的 token。
+         整个文件下面还有几百行样式在用它们 —— 换名字就得全文改，风险大、
+         收益小（批次 2 的纪律是「只换皮」）。所以走「旧名 → 新 token」的别名。
+
+       依据（apple-design skill）：
+         · 排版：字距随字号变（大标题收紧、正文接近 0）；行高与字号反向
+         · 材质：半透明 + backdrop-filter 表达层级；亮边模拟「光打到材质上」
+         · 颜色：成套的中性色阶，别用零散的十六进制
+         · 圆角/间距：统一 scale，不要随手写
+       ============================================================ */
     :root {
-      --bg: #f7f8fa;
-      --card: #ffffff;
-      --line: #e5e7eb;
-      --text: #1f2937;
-      --muted: #6b7280;
-      --primary: #3b82f6;
-      --primary-dark: #2563eb;
-      --danger: #ef4444;
-      --ok: #10b981;
+      /* ---- 中性色阶（浅色主题）---- */
+      --n-0:  #ffffff;  /* 最亮：卡片面 */
+      --n-1:  #fcfcfd;
+      --n-2:  #f5f6f8;  /* 窗口底 */
+      --n-3:  #eef0f3;  /* 悬停底 */
+      --n-4:  #e3e6ea;  /* 分隔线 */
+      --n-5:  #d3d8de;  /* 强分隔 / 描边 */
+      --n-6:  #9aa3ae;  /* 次要文字（弱） */
+      --n-7:  #6b7280;  /* 次要文字 */
+      --n-8:  #3d4451;  /* 正文（弱） */
+      --n-9:  #1c1f26;  /* 正文 */
+      --n-10: #0b0d11;  /* 最强 */
+
+      /* ---- 强调色 ---- */
+      --a-500: #0a84ff;  /* 苹果系统蓝，比原来的 #3b82f6 更「系统」一点 */
+      --a-600: #0069d9;
+      --a-050: #eaf4ff;  /* 极浅底：选中态 */
+      --a-ring: rgba(10, 132, 255, .28);
+
+      --ok-500: #12b76a;
+      --ok-050: #eafaf1;
+      --warn-500: #dc8a00;
+      --warn-050: #fff7e6;
+      --warn-line: #ffd88a;
+      --danger-500: #f04438;
+      --danger-600: #d92d20;
+      --danger-050: #fef2f2;
+      --danger-line: #fecaca;
+
+      /* ---- 语义别名（旧名沿用，别删）---- */
+      --bg: var(--n-2);
+      --card: var(--n-0);
+      --line: var(--n-4);
+      --text: var(--n-9);
+      --muted: var(--n-7);
+      --primary: var(--a-500);
+      --primary-dark: var(--a-600);
+      --danger: var(--danger-500);
+      --ok: var(--ok-500);
+
+      /* ---- 材质（毛玻璃）---- */
+      /* ★ 亮边 = 光打在材质上；半透明底 + blur = 内容从下面透出来 */
+      --mat-chrome: rgba(252, 252, 253, .72);   /* 顶部 chrome（最亮的一层） */
+      --mat-blur: 22px;
+      --mat-sat: 180%;
+      --mat-edge: rgba(255, 255, 255, .55);
+
+      /* ---- 阴影：越大越厚（层级就靠它和 blur 一起说）----
+         ⚠ --sh-3 / --r-pill 现在还挂在「没被用上」的清单里，这是**故意的**：
+         settings 窗口现在没有「从触发点长出来的浮层」（cherry-pick 式菜单、
+         悬浮工具条那种），批次 3 做完动效才会用到。不自检不算数。 */
+      --sh-1: 0 1px 2px rgba(16, 20, 28, .06);
+      --sh-2: 0 2px 6px rgba(16, 20, 28, .07), 0 1px 2px rgba(16, 20, 28, .05);
+      --sh-3: 0 10px 28px rgba(16, 20, 28, .12), 0 2px 6px rgba(16, 20, 28, .06);
+      --sh-4: 0 22px 56px rgba(16, 20, 28, .26), 0 4px 12px rgba(16, 20, 28, .10);
+
+      /* ---- 圆角 scale ---- */
+      --r-xs: 6px;
+      --r-sm: 8px;
+      --r-md: 11px;
+      --r-lg: 14px;
+      --r-xl: 18px;
+      --r-pill: 999px;
+
+      /* ---- 间距 scale（4 的倍数，别随手写 7px / 13px）---- */
+      --s-1: 4px;
+      --s-2: 8px;
+      --s-3: 12px;
+      --s-4: 16px;
+      --s-5: 20px;
+      --s-6: 24px;
+
+      /* ---- 排版三级 ----
+         ★ 字距随字号变：大标题收紧（负）、正文接近 0、小微调正。
+           行高与字号反向：大的收紧、小的放开。 */
+      --fs-title: 17px;  --lh-title: 1.25; --ls-title: -0.018em;
+      --fs-head:  15px;  --lh-head:  1.30; --ls-head:  -0.012em;
+      --fs-body:  13px;  --lh-body:  1.65; --ls-body:  0em;
+      --fs-sub:   12px;  --lh-sub:   1.55; --ls-sub:   0.004em;
+      --fs-micro: 11px;  --lh-micro: 1.40; --ls-micro: 0.012em;
+
+      /* ---- 动效时长（批次 3 真正上弹簧，这里先给个克制的过渡）---- */
+      --t-fast: 110ms;
+      --t-base: 180ms;
+      --ease-out: cubic-bezier(.32, .72, 0, 1);
+    }
+
+    /* ---- 深色主题：只换 token 的值，其它样式一行都不用改 ---- */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --n-0:  #1c1f26;
+        --n-1:  #20242c;
+        --n-2:  #14171c;
+        --n-3:  #262b34;
+        --n-4:  #2f353f;
+        --n-5:  #3b424e;
+        --n-6:  #6c7683;
+        --n-7:  #98a1ad;
+        --n-8:  #c3cad3;
+        --n-9:  #e9edf2;
+        --n-10: #f7f9fb;
+
+        --a-050: rgba(10, 132, 255, .16);
+        --ok-050: rgba(18, 183, 106, .14);
+        --warn-050: rgba(220, 138, 0, .14);
+        --warn-line: rgba(255, 216, 138, .34);
+        --danger-050: rgba(240, 68, 56, .14);
+        --danger-line: rgba(254, 202, 202, .30);
+
+        --mat-chrome: rgba(28, 31, 38, .70);
+        --mat-edge: rgba(255, 255, 255, .08);
+
+        --sh-1: 0 1px 2px rgba(0, 0, 0, .40);
+        --sh-2: 0 2px 6px rgba(0, 0, 0, .42), 0 1px 2px rgba(0, 0, 0, .30);
+        --sh-3: 0 10px 28px rgba(0, 0, 0, .48), 0 2px 6px rgba(0, 0, 0, .32);
+        --sh-4: 0 22px 56px rgba(0, 0, 0, .62), 0 4px 12px rgba(0, 0, 0, .40);
+      }
     }
 
     * { box-sizing: border-box; }
@@ -26,8 +150,15 @@
       height: 100%;
       background: var(--bg);
       color: var(--text);
-      font-family: "Microsoft YaHei", system-ui, sans-serif;
-      font-size: 14px;
+      /* ★ 系统字体优先（apple-design：平台字体自带光学尺寸和字距表）。
+         Windows 上 Segoe UI 就是系统脸；中文再依次回落到雅黑。 */
+      font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI",
+                   system-ui, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+      font-size: var(--fs-body);
+      line-height: var(--lh-body);
+      letter-spacing: var(--ls-body);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
     body {
       display: flex;
@@ -35,78 +166,135 @@
       overflow: hidden;
     }
 
+    /* 数字统一用等宽字形：时间 / 倒计时 / 计数不再跳字 */
+    .tnum { font-variant-numeric: tabular-nums; }
+
     /* ---------- 顶部 ---------- */
+    /* ★ 毛玻璃：半透明 + blur，内容从下面透出来（apple-design 第 12 节）。
+       亮边那一条是「光打到材质上」，比纯 1px 灰线更像实物。 */
     header {
-      padding: 16px 18px 12px;
-      background: var(--card);
+      padding: var(--s-4) 18px var(--s-3);
+      background: var(--mat-chrome);
+      backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+      -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
       border-bottom: 1px solid var(--line);
+      box-shadow: inset 0 1px 0 var(--mat-edge);
       flex: none;
     }
     h1 {
       margin: 0;
-      font-size: 17px;
+      font-size: var(--fs-title);
+      line-height: var(--lh-title);
+      letter-spacing: var(--ls-title);
       font-weight: 600;
     }
     .sub {
-      margin: 4px 0 0;
-      font-size: 12px;
+      margin: var(--s-1) 0 0;
+      font-size: var(--fs-sub);
+      line-height: var(--lh-sub);
+      letter-spacing: var(--ls-sub);
       color: var(--muted);
     }
 
     /* ---------- 工具栏 ---------- */
     .toolbar {
       display: flex;
-      gap: 8px;
-      padding: 12px 18px;
+      gap: var(--s-2);
+      padding: var(--s-3) 18px;
       flex: none;
     }
+
+    /* ★ 按钮：按压反馈放在 :active 上，而且**按下立刻**就有（apple-design 第 1 节）。
+       过渡只过渡背景/边框/颜色（这些不触发重排），transform 用更短的时长，
+       让人感觉「按下去就有反应」，而不是等一个 180ms 的动画播完。 */
     button {
       font-family: inherit;
-      font-size: 13px;
-      border-radius: 8px;
+      font-size: var(--fs-body);
+      letter-spacing: var(--ls-body);
+      border-radius: var(--r-sm);
       padding: 7px 14px;
       border: 1px solid transparent;
       cursor: pointer;
-      transition: background .15s, border-color .15s, color .15s;
+      transition: background var(--t-base) var(--ease-out),
+                  border-color var(--t-base) var(--ease-out),
+                  color var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out),
+                  transform var(--t-fast) var(--ease-out);
     }
-    button:active { transform: translateY(1px); }
+    button:active { transform: scale(.97); }
+    /* ★ 同一个视觉效果，但由 JS 在 pointerdown 时加上 ——
+       这样「按下去」就立刻有反应，不用等浏览器到松手时才认 `:active`。 */
+    button.pressing { transform: scale(.97); }
+    /* ↓ 同一套「按下即响应」的手感，铺到所有可点区域。
+       为什么不用 :active 就完事：:active 要等浏览器处理完 pointerdown 才会生效，
+       而 pointerdown 派发到 JS 的时机更早。差的那几毫秒，手指是能感觉到的。 */
+    .app-cell.pressing { transform: scale(.96); }
+    #wd-list label.pressing { background: var(--n-3); }
+    /* 键盘焦点要看得见（鼠标点击不给光圈，免得每次点都闪一下） */
+    button:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px var(--a-ring);
+    }
+    button:disabled { opacity: .55; cursor: default; }
+    button:disabled:active { transform: none; }
 
-    .primary { background: var(--primary); color: #fff; }
+    .primary {
+      background: var(--primary);
+      color: #fff;
+      box-shadow: var(--sh-1);
+    }
     .primary:hover { background: var(--primary-dark); }
+    .primary:active { box-shadow: none; }
 
-    .ghost { background: var(--card); border-color: var(--line); color: var(--text); }
-    .ghost:hover { border-color: #cbd5e1; background: #f9fafb; }
+    /* 次要按钮：用材质感的浅底，而不是纯色块 —— 显得「轻」 */
+    .ghost {
+      background: var(--n-0);
+      border-color: var(--line);
+      color: var(--text);
+      box-shadow: var(--sh-1);
+    }
+    .ghost:hover { border-color: var(--n-5); background: var(--n-1); }
+    .ghost:active { box-shadow: none; background: var(--n-3); }
 
-    .danger { background: var(--card); border-color: var(--line); color: var(--danger); }
-    .danger:hover { border-color: var(--danger); background: #fef2f2; }
+    .danger {
+      background: var(--n-0);
+      border-color: var(--line);
+      color: var(--danger-500);
+      box-shadow: var(--sh-1);
+    }
+    .danger:hover { border-color: var(--danger-500); background: var(--danger-050); }
+    .danger:active { box-shadow: none; }
 
     /* ---------- 添加 / 编辑表单 ---------- */
     #form {
-      margin: 0 18px 12px;
-      padding: 14px 16px;
+      margin: 0 18px var(--s-3);
+      padding: var(--s-4);
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: var(--r-lg);
+      box-shadow: var(--sh-2);
       flex: none;
     }
     #form.hidden { display: none; }
 
     #form-title {
-      margin: 0 0 10px;
-      font-size: 14px;
+      margin: 0 0 var(--s-3);
+      font-size: var(--fs-head);
+      line-height: var(--lh-head);
+      letter-spacing: var(--ls-head);
       font-weight: 600;
     }
 
     .field {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: var(--s-2);
       margin-bottom: 9px;
     }
     .field > span {
       flex: none;
       width: 54px;
-      font-size: 13px;
+      font-size: var(--fs-body);
       color: var(--muted);
     }
     .field input,
@@ -114,18 +302,20 @@
       flex: 1;
       min-width: 0;
       font-family: inherit;
-      font-size: 13px;
+      font-size: var(--fs-body);
       padding: 6px 9px;
       border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #fff;
+      border-radius: var(--r-sm);
+      background: var(--n-0);
       color: var(--text);
+      transition: border-color var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out);
     }
     .field input:focus,
     .field select:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, .13);
+      box-shadow: 0 0 0 3px var(--a-ring);
     }
     .field.hidden { display: none; }
 
@@ -140,38 +330,41 @@
       display: inline-flex;
       align-items: center;
       gap: 3px;
-      font-size: 12px;
+      font-size: var(--fs-sub);
       color: var(--text);
       padding: 4px 7px;
       border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #fff;
+      border-radius: var(--r-sm);
+      background: var(--n-0);
       cursor: pointer;
       user-select: none;
+      transition: background var(--t-base) var(--ease-out),
+                  border-color var(--t-base) var(--ease-out);
     }
+    #wd-list label:active { transform: scale(.97); }
     #wd-list label:has(input:checked) {
       border-color: var(--primary);
-      background: #eff6ff;
+      background: var(--a-050);
       color: var(--primary-dark);
     }
     #wd-list input { margin: 0; accent-color: var(--primary); }
 
     #form-error {
-      margin: 8px 0 0;
+      margin: var(--s-2) 0 0;
       padding: 7px 10px;
       font-size: 12.5px;
-      color: #b91c1c;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      border-radius: 7px;
+      color: var(--danger-600);
+      background: var(--danger-050);
+      border: 1px solid var(--danger-line);
+      border-radius: var(--r-sm);
     }
     #form-error.hidden { display: none; }
 
     .form-actions {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
-      margin-top: 12px;
+      gap: var(--s-2);
+      margin-top: var(--s-3);
     }
 
     /* ---------- 日程列表 ---------- */
@@ -186,9 +379,11 @@
       padding: 0;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: var(--s-2);
     }
 
+    /* ★ 每条日程是一张「会浮起来的纸」：默认就有很浅的阴影（sh-1），
+       悬停时升到 sh-2 —— 让人感觉鼠标下面是可点的一层东西，而不是一块贴纸。 */
     .item {
       display: flex;
       align-items: center;
@@ -196,8 +391,12 @@
       padding: 11px 13px;
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 11px;
+      border-radius: var(--r-md);
+      box-shadow: var(--sh-1);
+      transition: box-shadow var(--t-base) var(--ease-out),
+                  border-color var(--t-base) var(--ease-out);
     }
+    .item:hover { box-shadow: var(--sh-2); border-color: var(--n-5); }
     .item.off { opacity: .5; }
 
     /* 开关：点一下临时静音，不删掉 */
@@ -207,12 +406,13 @@
       height: 20px;
       padding: 0;
       border: none;
-      border-radius: 999px;
-      background: #d1d5db;
+      border-radius: var(--r-pill);
+      background: var(--n-5);
       position: relative;
       cursor: pointer;
-      transition: background .18s;
+      transition: background var(--t-base) var(--ease-out);
     }
+    .switch:active { transform: scale(.94); }
     .switch::after {
       content: "";
       position: absolute;
@@ -222,42 +422,49 @@
       height: 16px;
       border-radius: 50%;
       background: #fff;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
-      transition: transform .18s;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, .28);
+      transition: transform var(--t-base) var(--ease-out);
     }
     .switch[aria-pressed="true"] { background: var(--ok); }
     .switch[aria-pressed="true"]::after { transform: translateX(14px); }
+    .switch:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--a-ring); }
 
     .item .main {
       flex: 1;
       min-width: 0;
       display: flex;
       align-items: baseline;
-      gap: 8px;
+      gap: var(--s-2);
       flex-wrap: wrap;
     }
+    /* ★ 时间是这一行里最该先被看见的 —— 用最大字号 + 收紧字距 + 等宽数字 */
     .item .time {
-      font-size: 15px;
+      font-size: var(--fs-head);
+      line-height: var(--lh-head);
+      letter-spacing: var(--ls-head);
       font-weight: 600;
       font-variant-numeric: tabular-nums;
     }
     .item .title {
-      font-size: 14px;
+      font-size: var(--fs-body);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       max-width: 190px;
     }
+    /* 「每天」「每周一」是元信息，用最小的字号 + 一点点正字距让它更清楚 */
     .item .repeat {
-      font-size: 11.5px;
+      font-size: var(--fs-micro);
+      line-height: var(--lh-micro);
+      letter-spacing: var(--ls-micro);
       color: var(--muted);
-      background: #f3f4f6;
-      border-radius: 5px;
-      padding: 1px 6px;
+      background: var(--n-3);
+      border-radius: var(--r-xs);
+      padding: 2px 6px;
     }
     .item.off .repeat::after {
       content: " · 已关掉";
-      color: #9ca3af;
+      color: var(--n-6);
     }
 
     .item .actions {
@@ -267,7 +474,7 @@
     }
     .item .actions button {
       padding: 4px 9px;
-      font-size: 12px;
+      font-size: var(--fs-sub);
     }
 
     /* ---------- 周视图 ---------- */
@@ -297,10 +504,13 @@
     }
     #week-head .day-head {
       text-align: center;
-      font-size: 12px;
+      font-size: var(--fs-sub);
+      line-height: var(--lh-sub);
+      letter-spacing: var(--ls-sub);
       color: var(--muted);
       padding: 4px 0 6px;
     }
+    /* 今天那一列：加粗 + 用强调色，但**不加底色**（底色已经在列上有了） */
     #week-head .day-head.today { color: var(--primary-dark); font-weight: 600; }
 
     #week-grid {
@@ -309,7 +519,8 @@
       overflow-y: auto;
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: var(--r-md);
+      box-shadow: var(--sh-1);
     }
     #week-canvas {
       display: grid;
@@ -319,7 +530,8 @@
     /* 左边那一条时间刻度 */
     .hour-col { position: relative; }
     .hour {
-      font-size: 10.5px;
+      font-size: var(--fs-micro);
+      line-height: var(--lh-micro);
       color: var(--muted);
       text-align: right;
       padding-right: 6px;
@@ -331,18 +543,19 @@
       position: relative;
       border-left: 1px solid var(--line);
     }
-    .day-col.today { background: #eff6ff; }
+    .day-col.today { background: var(--a-050); }
 
     /* 空白格：点一下就在这一格新建日程。z-index 低于方块，不会挡住点方块 */
     .slot {
       position: absolute;
       left: 0;
       right: 0;
-      border-top: 1px solid #f1f3f5;
+      border-top: 1px solid var(--n-3);
       z-index: 1;
       cursor: pointer;
+      transition: background var(--t-fast) var(--ease-out);
     }
-    .slot:hover { background: #f8fafc; }
+    .slot:hover { background: var(--n-3); }
 
     /* 方块：时段是高的长方体，时间点是扁的（.point 只有 22px 高） */
     .blk {
@@ -350,16 +563,22 @@
       left: 3px;
       right: 3px;
       z-index: 2;
-      border-radius: 6px;
+      border-radius: var(--r-xs);
       padding: 2px 5px;
-      font-size: 11px;
+      font-size: var(--fs-micro);
+      line-height: var(--lh-micro);
+      letter-spacing: var(--ls-micro);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       cursor: pointer;
       color: #fff;
-      box-shadow: 0 1px 2px rgba(15, 23, 42, .18);
+      box-shadow: var(--sh-1);
+      transition: transform var(--t-fast) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out);
     }
+    .blk:hover { box-shadow: var(--sh-2); }
+    .blk:active { transform: scale(.985); }
     .blk.point { height: 22px; }
     .blk.off { opacity: .45; } /* 关掉的日程：变淡，但还在（和列表一致） */
     .blk[data-color="blue"]   { background: var(--c-blue); }
@@ -376,7 +595,7 @@
       margin: 34px 18px;
       text-align: center;
       color: var(--muted);
-      font-size: 13px;
+      font-size: var(--fs-body);
       line-height: 1.9;
     }
     #empty.hidden { display: none; }
@@ -395,56 +614,65 @@
       flex: 1;
       min-height: 0;
       overflow-y: auto;
-      padding: 16px 18px 18px;
+      padding: var(--s-4) 18px 18px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: var(--s-3);
     }
     #focus-page.hidden { display: none; }
 
     .focus-top {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: var(--s-2);
       flex: none;
     }
-    .focus-top h1 { font-size: 17px; }
+    .focus-top h1 {
+      font-size: var(--fs-title);
+      line-height: var(--lh-title);
+      letter-spacing: var(--ls-title);
+    }
 
     /* 安全 DNS 提醒：三态三种颜色，不用红色吓人，但要看得见 */
     #focus-doh {
       flex: none;
       border: 1px solid;
-      border-radius: 10px;
-      padding: 10px 12px;
+      border-radius: var(--r-md);
+      padding: var(--s-3);
       font-size: 12.5px;
       line-height: 1.75;
     }
     #focus-doh.hidden { display: none; }
-    #focus-doh.warn    { background: #fff7ed; border-color: #fdba74; color: #7c2d12; }
-    #focus-doh.ok      { background: #f0fdf4; border-color: #86efac; color: #14532d; }
-    #focus-doh.unknown { background: #f8fafc; border-color: #cbd5e1; color: #334155; }
+    #focus-doh.warn    { background: var(--warn-050); border-color: var(--warn-line); color: var(--warn-500); }
+    #focus-doh.ok      { background: var(--ok-050); border-color: var(--ok-500); color: #0d7a48; }
+    #focus-doh.unknown { background: var(--n-2); border-color: var(--n-5); color: var(--n-8); }
     #focus-doh b { font-weight: 600; }
 
+    /* 专注页的卡片和日程条目用同一套「纸」的语言：浅阴影 + 悬停加厚 */
     .focus-card {
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 14px 16px;
+      border-radius: var(--r-lg);
+      padding: var(--s-4);
+      box-shadow: var(--sh-1);
       flex: none;
     }
     .focus-h {
-      margin: 0 0 4px;
-      font-size: 14px;
+      margin: 0 0 var(--s-1);
+      font-size: var(--fs-head);
+      line-height: var(--lh-head);
+      letter-spacing: var(--ls-head);
       font-weight: 600;
     }
     .focus-hint {
-      margin: 4px 0 10px;
-      font-size: 12px;
+      margin: var(--s-1) 0 var(--s-3);
+      font-size: var(--fs-sub);
+      line-height: var(--lh-body);
+      letter-spacing: var(--ls-sub);
       color: var(--muted);
-      line-height: 1.7;
     }
 
-    .focus-col + .focus-col { margin-top: 12px; }
+    .focus-col + .focus-col { margin-top: var(--s-3); }
     .focus-col-head {
       font-size: 12.5px;
       color: var(--muted);
@@ -452,13 +680,13 @@
     }
     .focus-add {
       display: flex;
-      gap: 8px;
+      gap: var(--s-2);
     }
     .focus-add input {
       flex: 1;
       min-width: 0;
       font-family: inherit;
-      font-size: 13px;
+      font-size: var(--fs-body);
       padding: 7px 10px;
       border: 1px solid var(--line);
       border-radius: 7px;
@@ -468,13 +696,13 @@
     .focus-add input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, .13);
+      box-shadow: 0 0 0 3px var(--a-ring);
     }
     .focus-add button { flex: none; padding: 7px 12px; }
 
     .focus-list {
       list-style: none;
-      margin: 8px 0 0;
+      margin: var(--s-2) 0 0;
       padding: 0;
       display: flex;
       flex-direction: column;
@@ -484,12 +712,12 @@
     .focus-list li {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: var(--s-2);
       padding: 6px 10px;
-      background: #f9fafb;
+      background: var(--n-2);
       border: 1px solid var(--line);
-      border-radius: 7px;
-      font-size: 13px;
+      border-radius: var(--r-sm);
+      font-size: var(--fs-body);
     }
     .focus-list li .focus-val {
       flex: 1;
@@ -503,44 +731,52 @@
       padding: 1px 8px;
       font-size: 14px;
       line-height: 1.4;
-      border-radius: 6px;
-      background: var(--card);
+      border-radius: var(--r-xs);
+      background: var(--n-0);
       border: 1px solid var(--line);
       color: var(--muted);
       cursor: pointer;
+      transition: border-color var(--t-base) var(--ease-out),
+                  color var(--t-base) var(--ease-out);
     }
-    .focus-list li .focus-del:hover { border-color: var(--danger); color: var(--danger); }
+    .focus-list li .focus-del:hover { border-color: var(--danger-500); color: var(--danger-500); }
+    .focus-list li .focus-del:active { transform: scale(.92); }
 
     #focus-error {
-      margin: 10px 0 0;
+      margin: var(--s-2) 0 0;
       padding: 7px 10px;
       font-size: 12.5px;
-      color: #b91c1c;
-      background: #fef2f2;
-      border: 1px solid #fecaca;
-      border-radius: 7px;
+      color: var(--danger-600);
+      background: var(--danger-050);
+      border: 1px solid var(--danger-line);
+      border-radius: var(--r-sm);
     }
     #focus-error.hidden { display: none; }
 
+    /* 预设时长：选中的那个用强调色底 + 稍微加重（不是只换个边框） */
     .focus-presets {
       display: flex;
-      gap: 8px;
+      gap: var(--s-2);
       flex-wrap: wrap;
     }
     .focus-presets button {
-      background: var(--card);
+      background: var(--n-0);
       border: 1px solid var(--line);
       color: var(--text);
+      box-shadow: var(--sh-1);
+      font-variant-numeric: tabular-nums;
     }
-    .focus-presets button:hover { border-color: #cbd5e1; background: #f9fafb; }
+    .focus-presets button:hover { border-color: var(--n-5); background: var(--n-1); }
+    .focus-presets button:active { box-shadow: none; }
     .focus-presets button.on {
       border-color: var(--primary);
-      background: #eff6ff;
+      background: var(--a-050);
       color: var(--primary-dark);
       font-weight: 600;
+      box-shadow: none;
     }
 
-    #focus-custom-row { margin-top: 10px; }
+    #focus-custom-row { margin-top: var(--s-3); }
     #focus-custom-row.hidden { display: none; }
     #focus-custom-row input {
       flex: 1;
@@ -549,7 +785,7 @@
       font-size: 13px;
       padding: 7px 10px;
       border: 1px solid var(--line);
-      border-radius: 7px;
+      border-radius: var(--r-sm);
     }
 
     #focus-run { text-align: center; }
@@ -557,17 +793,22 @@
     .focus-start {
       width: 100%;
       padding: 12px 0;
-      font-size: 15px;
+      font-size: var(--fs-head);
+      line-height: var(--lh-head);
+      letter-spacing: var(--ls-head);
       font-weight: 600;
+      border-radius: var(--r-md);
+      box-shadow: var(--sh-2);
     }
+    .focus-start:active { box-shadow: none; }
     .focus-ring-wrap {
       position: relative;
       width: 150px;
       height: 150px;
-      margin: 4px auto 10px;
+      margin: var(--s-1) auto var(--s-3);
     }
     .focus-ring { width: 150px; height: 150px; transform: rotate(-90deg); }
-    .focus-ring .ring-bg { fill: none; stroke: #eef1f5; stroke-width: 9; }
+    .focus-ring .ring-bg { fill: none; stroke: var(--n-3); stroke-width: 9; }
     .focus-ring .ring-fg {
       fill: none;
       stroke: var(--primary);
@@ -575,6 +816,7 @@
       stroke-linecap: round;
       transition: stroke-dashoffset .5s linear;
     }
+    /* ★ 倒计时是这个页面唯一的主角：字号最大、字距收紧、等宽数字（不跳） */
     .focus-countdown {
       position: absolute;
       inset: 0;
@@ -582,6 +824,8 @@
       align-items: center;
       justify-content: center;
       font-size: 30px;
+      line-height: 1;
+      letter-spacing: -0.02em;
       font-weight: 600;
       font-variant-numeric: tabular-nums;
       color: var(--text);
@@ -589,36 +833,40 @@
     .focus-stop {
       width: 100%;
       padding: 11px 0;
-      font-size: 14px;
+      font-size: var(--fs-body);
+      border-radius: var(--r-md);
       user-select: none;
     }
     .focus-stop.holding {
-      background: #fef2f2;
-      border-color: var(--danger);
+      background: var(--danger-050);
+      border-color: var(--danger-500);
     }
 
     /* ---------- 已安装软件选择器（v4 批次 1） ---------- */
     .browse-btn {
       width: 100%;
-      margin-top: 8px;
+      margin-top: var(--s-2);
       padding: 8px 0;
-      font-size: 13px;
+      font-size: var(--fs-body);
     }
 
     #app-picker {
       position: fixed;
       inset: 0;
       z-index: 50;
-      background: rgba(15, 23, 42, .38);
+      /* 遮罩：重点靠「把后面压下去」来表达，而不是把遮罩调得很黑 */
+      background: rgba(12, 16, 22, .40);
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: var(--s-5);
     }
     #app-picker.hidden { display: none; }
 
-    /* 关闭动画：面板「收回去」。素材是 grid 从触发按钮长出来的第一版，
-       真正的弹簧留到批次 3（这一版只做「不突兀」）。 */
+    /* 弹入动画：面板「长出来」。
+       ⚠ 这里还是 CSS keyframes —— 真正「可打断 + 从触发按钮长出来」的弹簧留到批次 3。
+         批次 3 会把它换成手写 rAF 弹簧（keyframes 没法中途抓住反向）。
+         现在只求「不突兀」：180ms、无回弹、收尾有轻微减速。 */
     .picker-panel {
       width: 100%;
       max-width: 560px;
@@ -627,13 +875,13 @@
       flex-direction: column;
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      box-shadow: 0 18px 48px rgba(15, 23, 42, .28);
+      border-radius: var(--r-xl);
+      box-shadow: var(--sh-4);
       overflow: hidden;
-      animation: picker-pop .18s cubic-bezier(.32, .72, 0, 1);
+      animation: picker-pop var(--t-base) var(--ease-out);
     }
     @keyframes picker-pop {
-      from { opacity: 0; transform: scale(.96) translateY(6px); }
+      from { opacity: 0; transform: scale(.965) translateY(8px); }
       to   { opacity: 1; transform: scale(1) translateY(0); }
     }
 
@@ -642,9 +890,15 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 14px 16px 0;
+      padding: var(--s-4) var(--s-4) 0;
     }
-    .picker-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .picker-head h2 {
+      margin: 0;
+      font-size: var(--fs-head);
+      line-height: var(--lh-head);
+      letter-spacing: var(--ls-head);
+      font-weight: 600;
+    }
     .picker-close {
       flex: none;
       width: 26px;
@@ -655,41 +909,48 @@
       color: var(--muted);
       background: transparent;
       border: none;
-      border-radius: 7px;
+      border-radius: var(--r-xs);
       cursor: pointer;
+      transition: background var(--t-base) var(--ease-out), color var(--t-base) var(--ease-out);
     }
-    .picker-close:hover { background: #f1f3f5; color: var(--text); }
+    .picker-close:hover { background: var(--n-3); color: var(--text); }
+    .picker-close:active { transform: scale(.9); }
 
     .picker-hint {
       flex: none;
-      margin: 6px 16px 10px;
-      font-size: 12px;
+      margin: 6px var(--s-4) 10px;
+      font-size: var(--fs-sub);
+      line-height: var(--lh-sub);
+      letter-spacing: var(--ls-sub);
       color: var(--muted);
-      line-height: 1.6;
     }
 
     .picker-search {
       flex: none;
-      margin: 0 16px 12px;
+      margin: 0 var(--s-4) var(--s-3);
       font-family: inherit;
-      font-size: 13px;
+      font-size: var(--fs-body);
       padding: 8px 11px;
       border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      border-radius: var(--r-sm);
+      background: var(--n-1);
       color: var(--text);
+      transition: border-color var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out),
+                  background var(--t-base) var(--ease-out);
     }
     .picker-search:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, .13);
+      background: var(--n-0);
+      box-shadow: 0 0 0 3px var(--a-ring);
     }
 
     .picker-grid {
       flex: 1;
       min-height: 120px;
       overflow-y: auto;
-      padding: 0 12px 12px;
+      padding: 0 var(--s-3) var(--s-3);
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
       gap: 6px;
@@ -704,28 +965,33 @@
       gap: 6px;
       padding: 10px 6px 8px;
       border: 1px solid transparent;
-      border-radius: 10px;
+      border-radius: var(--r-md);
       background: transparent;
       cursor: pointer;
       text-align: center;
+      transition: background var(--t-fast) var(--ease-out),
+                  border-color var(--t-fast) var(--ease-out),
+                  transform var(--t-fast) var(--ease-out);
     }
-    .app-cell:hover { background: #f4f6f9; border-color: var(--line); }
-    .app-cell:active { transform: translateY(1px); }
+    /* ★ 按下就缩一下 —— 不等松手（apple-design 第 1 节「响应」） */
+    .app-cell:active { transform: scale(.96); }
+    .app-cell:hover { background: var(--n-3); border-color: var(--line); }
 
-    /* ★ 按下即响应：不等松手（apple-design「响应」原则） */
+    /* 图标：给 44px 的「看得见的框」，但图片按 contain 缩到里面 ——
+       Windows 图标本身带内边距，硬拉满会显得大小不一。 */
     .app-cell .app-icon {
-      width: 34px;
-      height: 34px;
+      width: 36px;
+      height: 36px;
       flex: none;
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 8px;
+      border-radius: var(--r-sm);
       overflow: hidden;
       font-size: 15px;
       font-weight: 600;
       color: #fff;
-      background: #94a3b8; /* 兜底色；JS 会按名字换成具体颜色 */
+      background: var(--n-6); /* 兜底色；JS 会按名字换成具体颜色 */
     }
     .app-cell .app-icon img {
       width: 100%;
@@ -734,8 +1000,9 @@
       display: block;
     }
     .app-cell .app-name {
-      font-size: 11.5px;
-      line-height: 1.35;
+      font-size: var(--fs-micro);
+      line-height: var(--lh-micro);
+      letter-spacing: var(--ls-micro);
       color: var(--text);
       width: 100%;
       overflow: hidden;
@@ -748,19 +1015,20 @@
     .app-cell.added {
       opacity: .55;
       cursor: default;
-      background: #f8fafc;
+      background: var(--n-2);
       border-color: var(--line);
     }
+    .app-cell.added:active { transform: none; }
     .app-cell.added .app-name::after {
       content: " ✓";
-      color: var(--ok);
+      color: var(--ok-500);
       font-weight: 600;
     }
     /* 「拦不住」的标记：如实告诉主人，不假装能用 */
     .app-cell .app-warn {
       font-size: 10px;
-      color: #b45309;
       line-height: 1.2;
+      color: var(--warn-500);
     }
 
     .picker-empty {
@@ -768,25 +1036,87 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 30px 16px;
-      font-size: 13px;
+      padding: 30px var(--s-4);
+      font-size: var(--fs-body);
       color: var(--muted);
       text-align: center;
     }
     .picker-empty.hidden { display: none; }
 
+    /* 底栏：把「有多少个」和「重新扫描」分开在两端，中间留空 —— 不做分隔线以外的装饰 */
     .picker-foot {
       flex: none;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      padding: 10px 16px;
+      gap: var(--s-2);
+      padding: var(--s-3) var(--s-4);
       border-top: 1px solid var(--line);
-      font-size: 12px;
+      background: var(--n-1);
+      font-size: var(--fs-micro);
+      letter-spacing: var(--ls-micro);
       color: var(--muted);
+      font-variant-numeric: tabular-nums;
     }
-    .picker-foot button { padding: 5px 11px; font-size: 12px; }
+    .picker-foot button { padding: 5px 11px; font-size: var(--fs-sub); }
+
+    /* ============================================================
+       无障碍降级（apple-design 第 14 节）
+       ============================================================
+       三个信号互相独立，都要照顾：
+
+       ① prefers-reduced-motion：**不是「没有反馈」，而是换个温和的等价物**。
+          把位移/缩放/弹簧换成短促的透明度变化 —— 动效带来的眩晕是这个设置要挡的东西，
+          但「点下去有没有反应」这件事必须保留。
+       ② prefers-reduced-transparency：毛玻璃让人看不清字时就该变实心。
+          提高背景不透明度 + 关掉 blur。
+       ③ prefers-contrast：接近实心的底 + 明确的描边。
+
+       ⚠ 为什么三条都要写：主人的机器上默认是「都不开」，
+         所以**这三条在自检和截图里永远看不到效果** ——
+         正因如此更不能靠肉眼验收，得靠代码里明明白白写着。
+       ============================================================ */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+      /* 位移和缩放一律取消；保留颜色/透明度变化（那些帮人理解，不晕） */
+      .picker-panel { animation: none; }
+      button:active,
+      button.pressing,
+      .app-cell:active,
+      .app-cell.pressing,
+      .switch:active,
+      .focus-list li .focus-del:active,
+      .blk:active,
+      .focus-start:active { transform: none !important; }
+      /* 弹入改成淡入：还是有「东西来了」的感觉，但没有位移 */
+      #app-picker:not(.hidden) .picker-panel {
+        animation: picker-fade 160ms ease-out;
+      }
+      @keyframes picker-fade { from { opacity: 0; } to { opacity: 1; } }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+      header {
+        background: var(--n-0);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }
+    }
+
+    @media (prefers-contrast: more) {
+      :root {
+        --line: var(--n-6);
+        --muted: var(--n-8);
+        --mat-edge: transparent;
+      }
+      header { background: var(--n-0); backdrop-filter: none; -webkit-backdrop-filter: none; }
+      .item, .focus-card, #form, #week-grid { border-width: 1.5px; }
+      .ghost, .danger, .focus-presets button { border-color: var(--n-6); }
+    }
   </style>
 </head>
 <body>

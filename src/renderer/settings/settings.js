@@ -102,6 +102,53 @@ const HOUR_H = 40;
 
 // ---------- 小工具 ----------
 
+// ★ 「按下就响应」（apple-design 第 1 节）。
+//   浏览器默认的按压反馈要等 `click`（= 松手那一刻）才触发 —— 慢半拍，感觉像死的。
+//   这里在 `pointerdown` 上先把 `:active` 的样式**手动加上**，松手/移开再摘掉，
+//   于是「手指按下去的一瞬间」就有反馈，而不是等整个点击动作做完。
+//
+// ⚠ 两条容易踩的：
+//   · 用 `:active` 的视觉效果但**不改行为** —— 真正的动作仍然走 `click`，
+//     这样「按下后拖走取消」「键盘 Enter 触发」这些原生行为一个都没丢。
+//   · `pointerdown` 之后如果指针移出元素，得靠 `pointerleave` 把状态清掉，
+//     否则按钮会「一直按着」。
+function pressFeedback(el) {
+  if (!el || typeof el.addEventListener !== 'function') return;
+  const on = () => el.classList.add('pressing');
+  const off = () => el.classList.remove('pressing');
+  el.addEventListener('pointerdown', on);
+  el.addEventListener('pointerup', off);
+  el.addEventListener('pointerleave', off);
+  el.addEventListener('pointercancel', off);
+  el.addEventListener('blur', off);
+}
+
+// 给一个容器里所有（含以后动态加进来的）按钮都挂上按下反馈。
+// 用事件委托：`pointerdown` 会冒泡，所以一次性挂在 document 上最省事，
+// 而且**动态生成的按钮也自动生效**（列表项、软件格子都是 JS 建出来的）。
+function installPressFeedback(root) {
+  const target = root || document;
+  const pick = (e) => {
+    const b = e.target && e.target.closest
+      ? e.target.closest('button, .app-cell, #wd-list label')
+      : null;
+    return b;
+  };
+  target.addEventListener('pointerdown', (e) => {
+    const b = pick(e);
+    if (b && !b.disabled) b.classList.add('pressing');
+  }, true);
+  for (const ev of ['pointerup', 'pointercancel']) {
+    target.addEventListener(ev, () => {
+      document.querySelectorAll('.pressing').forEach((b) => b.classList.remove('pressing'));
+    }, true);
+  }
+  target.addEventListener('pointerleave', (e) => {
+    const b = pick(e);
+    if (b) b.classList.remove('pressing');
+  }, true);
+}
+
 function todayKey() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -1070,4 +1117,5 @@ el.form.addEventListener('keydown', (e) => {
 });
 
 // ---------- 启动 ----------
+installPressFeedback(document);
 load();

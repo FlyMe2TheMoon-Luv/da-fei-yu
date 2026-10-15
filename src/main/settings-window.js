@@ -17,7 +17,7 @@
 //   这里只做转交：把界面递上来的东西原样交给 schedules.add/update，
 //   它返回 { error } 就原样递回去给界面显示。
 
-const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, nativeTheme } = require('electron');
 const path = require('path');
 const schedules = require('./schedules');
 const week = require('./week');
@@ -273,7 +273,11 @@ function open(startMode = 'list') {
     frame: true,
     resizable: true,
     show: false,
-    backgroundColor: '#f7f8fa',
+    // ★ 窗口底色必须跟着系统主题走。
+    //   原来写死浅色 #f7f8fa，但界面 CSS 有 prefers-color-scheme: dark 分支 ——
+    //   主人的 Windows 就是深色模式，于是「开窗先闪一下白，再变黑」，很难看。
+    //   nativeTheme 是主进程侧的权威值，和渲染进程的 media query 同源。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#14171c' : '#f7f8fa',
     title: '日程管理 · 桌宠',
     webPreferences: {
       preload: PRELOAD,

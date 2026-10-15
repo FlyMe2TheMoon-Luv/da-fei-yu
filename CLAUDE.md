@@ -334,6 +334,57 @@ desktop-pet/
     可点完整个网格会重画，旧节点已经脱离文档，`classList` 自然没变 → 假失败。
     ★ 规则：凡是「操作后 DOM 会被重画」的地方，断言必须**按标识（如 exe 名）重新查一遍**，
     不能用旧的节点引用。
+53. **量「过渡中的属性」必须等它走完，否则断言是装饰** —— v4 批次 2 踩到：验「按下按钮会缩小」，
+    发完 `pointerdown` 立刻读 `getComputedStyle().transform`，读到的是
+    `matrix(1,0,0,1,0,0)`（= scale 1，**根本没变**），因为 transform 有 110ms 过渡。
+    而我的断言写的是 `transform !== 'none'` —— **「什么都没变」照样绿**。
+    ★ 修法：等过渡落地再量（`setTimeout(260)`），并且**量绝对数值**（`scale < 1`），
+    输出的对比值很能说明问题：`立刻 matrix(1,…) → 稳定后 matrix(0.97,…)（scale=0.97）`。
+    ★ 一般规律：**断言「不为空 / 不为 none」≈ 没断言**。要量出具体数字。
+54. **截图工具「三张图字节数一模一样」= 模式根本没切过去** —— v4 批次 2 踩到：
+    连着三次 `settingsWindow.open(mode)` 再 `capturePage()`，三张 PNG 都是 23130 字节，
+    因为 `open()` 在窗口已存在时**直接 `return win`，压根不看 `startMode`** → 三张都是首页。
+    ★ 修法：走真正的切换通道（`setMode()`，和用户点按钮同一条路），
+    然后**轮询确认界面真换了**（读对应容器的 `hidden` 类）再截，别死等固定毫秒数。
+    ★ 加自检：三张图字节数若有重复就**明确报错**，别让主人对着一张假图做验收。
+55. **窗口 `backgroundColor` 必须跟着系统主题** —— v4 批次 2 踩到：界面 CSS 有
+    `prefers-color-scheme: dark` 分支，但窗口底色写死浅色 `#f7f8fa`；
+    主人的 Windows 是深色模式 → **开窗先闪一下白再变黑**。
+    ★ 修法：主进程 `nativeTheme.shouldUseDarkColors` 决定底色（它和渲染进程 media query 同源）。
+    ★ 这条也解释了为什么 e2e 里会读到「深色」的 token 值（`--sh-1` 是 `rgba(0,0,0,.40)`）——
+    不是测试环境异常，是主人的真机就是深色。
+    ★ 顺手钉一条负对照：**界面认的深色状态 == 主进程认的深色状态**，否则将来又会飘回去。
+
+---
+
+## 第七节 · v4 UI 升级（批次 2 · 视觉层）写下来的约定
+
+- **只换皮，不动结构**：批次 2 的纪律是「token 化 + 材质 + 排版 + 按压反馈」，
+  **不改任何 DOM 结构和交互流程**。这样一批没得到主人确认也不会把地基动坏。
+- **旧变量名一律保留成别名**（`--bg` / `--card` / `--line` / `--text` / `--muted` /
+  `--primary` / `--danger` / `--ok` 都还指向新 token）——否则下游几百行样式要全改。
+- **设计 token 层**（`index.html` 的 `:root`）：
+  中性色 `--n-0…--n-10` / 强调色 `--a-500 --a-600 --a-050 --a-ring` /
+  材质 `--mat-chrome --mat-blur --mat-sat --mat-edge` / 阴影 `--sh-1…--sh-4` /
+  圆角 `--r-xs…--r-xl --r-pill` / 间距 `--s-1…--s-6` /
+  **排版三元组** `--fs-*  +  --lh-*  +  --ls-*`（字号必须连行高、字距一起给，
+  单给字号会让大字挤在一起）/ 动效 `--t-fast --t-base --ease-out`。
+  ★ **字距按字号分级**（apple-design）：大标题负字距、正文接近 0、小字正字距。
+- **深色主题只换 token 的值**，其它样式一行都不用改 —— 这是 token 化的最大收益。
+- **按压反馈走 `pointerdown`，不等 `:active`**（apple-design 第 1 节:响应性）：
+  JS 在 `pointerdown` 时手动加 `.pressing` 类，`pointerup/pointercancel/pointerleave` 摘掉。
+  ★ 只改**视觉效果**，真正的动作仍走 `click` —— 这样「按下后拖走取消」「键盘 Enter 触发」
+  这些原生行为一个都没丢。
+  ★ 用**事件委托**挂在 `document` 上（捕获阶段），动态生成的按钮（列表项、软件格子）自动生效。
+- **三条无障碍降级都要写**（`prefers-reduced-motion` / `prefers-reduced-transparency` /
+  `prefers-contrast`）：
+  ★ 「减少动态效果」**不是「没有反馈」，而是换个温和的等价物** ——
+  取消所有位移/缩放（`transform: none`），但保留透明度变化。
+  ★ 本机这三个设置**默认都不开**，所以**截图和自检里永远看不到效果**，
+  正因如此更不能靠肉眼验收，得靠代码里明明白白写着（e2e 读 CSSOM 确认那段存在）。
+  ★ 取消 `transform` 时，**JS 加的 `.pressing` 也要在名单里** —— 否则 JS 那条路会漏网。
+- **批次 3 才会用到的 token**（`--sh-3` / `--r-pill`）现在挂在「定义了没被用」的清单里，
+  这是**故意的**，别当成死代码删掉。
 
 ---
 
@@ -366,7 +417,7 @@ npm run test:apps            # v4·已安装软件扫描（解析 lnk / 过滤 /
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
-npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页 + 软件选择器）125
+npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页 + 软件选择器 + 视觉层）142
 npm run test:focusmode-e2e   # 专注模式端到端 60
 npm run test:week-e2e        # 周视图端到端 19
 npm run test:chat-e2e        # 聊天端到端 17
@@ -384,6 +435,9 @@ npm run build                # 打包（electron-builder）
 开发便利：
 - `PET_OPEN_SETTINGS=1 npm start -- --no-gpu` 启动时自动打开日程管理窗口（`=focus` / `=week` 指定页）
 - `PET_OPEN_PICKER=1 npm start -- --no-gpu` 启动时打开「已安装软件选择器」并**自己截一张图**存到 `tmp/v4-picker.png`（视觉验收用；比抓整个桌面可靠，不会被前台锁定挡住）
+- `PET_SHOT_PAGES=1 npm start -- --no-gpu` 把设置窗口的**列表 / 周视图 / 专注页各截一张**存到 `tmp/v4-pages-{list,week,focus}.png`（v4 视觉验收用）。
+  ★ 它走的是真正的 `setMode()` 通道并**轮询确认界面真换了**才截；三张图字节数若有重复会明确报错
+  （踩过「`open(mode)` 不看 startMode，三张图一模一样」的坑，见第 54 条）。
 - `PET_OPEN_CHAT=1 npm start -- --no-gpu` 启动时自动打开聊天条
 - `PET_OPEN_NOTICE=1 npm start -- --no-gpu` 启动时自动弹一张「拦截提示」卡片
 （都是做视觉验收 / 截图用）

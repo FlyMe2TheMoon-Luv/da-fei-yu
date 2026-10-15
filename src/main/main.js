@@ -2447,6 +2447,143 @@ async function runSettingsSelfTest() {
     ok(closed === true, '★ 点 × 能关掉面板');
   }
 
+  // ===== ⑧b⁵ 批次 2：视觉层（token / 材质 / 按压反馈）=====
+  // 为什么这节必须存在：UI 是主观的，全靠肉眼说「像苹果了」是没法回归的。
+  // 但「token 有没有真的接到控件上」「按压反馈是不是 pointerdown 触发」
+  // 这类事是客观的，可以钉死。肉眼看的部分交给截图。
+  log('⑧b⁴ᐨ 视觉层（v4 批次 2）：设计 token 是否真的接到控件上');
+  const vis = await sw.webContents.executeJavaScript(`(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const tok = (n) => cs.getPropertyValue(n).trim();
+    const btn = document.getElementById('btn-save') || document.querySelector('button');
+    const bcs = btn ? getComputedStyle(btn) : null;
+    const hdr = document.querySelector('header');
+    const hcs = hdr ? getComputedStyle(hdr) : null;
+    return {
+      // token 层必须真的定义了东西（不是空壳）
+      n3: tok('--n-3'),
+      accent: tok('--a-500'),
+      shadow: tok('--sh-1'),
+      rSm: tok('--r-sm'),
+      rMd: tok('--r-md'),
+      ease: tok('--ease-out'),
+      // 关键：token 要「接到」控件上，光定义没人用等于白写
+      btnRadius: bcs ? bcs.borderTopLeftRadius : '',
+      btnTransition: bcs ? bcs.transitionProperty : '',
+      hdrBackdrop: hcs ? (hcs.backdropFilter || hcs.webkitBackdropFilter || '') : '',
+      hdrBg: hcs ? hcs.backgroundColor : '',
+      // 字号分级：标题和正文必须不一样（否则分级是假的）
+      fsTitle: tok('--fs-title'),
+      fsBody: tok('--fs-body'),
+      fontFamily: getComputedStyle(document.body).fontFamily,
+    };
+  })()`);
+
+  ok(!!vis.n3 && !!vis.accent, '★ 中性色 / 强调色 token 有值', ` → --n-3:${vis.n3} --a-500:${vis.accent}`);
+  ok(!!vis.shadow && !!vis.rSm, '★ 阴影 / 圆角 token 有值', ` → --sh-1:${vis.shadow} --r-sm:${vis.rSm}`);
+  // 负对照：token 定义了却没人用，就是装饰。
+  //   基准用 --r-sm（button 自己用的就是它）。
+  //   ⚠ 这里量的是**绝对像素**，不是「差不多就行」 —— 手写测试最容易糊弄自己的地方
+  //   就是写成「不为空即通过」，那样把 border-radius 删了照样绿。
+  ok(vis.btnRadius === vis.rSm && vis.btnRadius !== '', '★ 负对照：按钮圆角真的来自 --r-sm（不是硬编码）',
+    ` → 按钮 ${vis.btnRadius} vs --r-sm ${vis.rSm}`);
+  // 再钉一条：两个圆角 token 值必须不同，否则「分级」是假的
+  ok(vis.rSm !== vis.rMd, '★ 负对照：--r-sm 和 --r-md 是不同值（圆角分级不是摆设）',
+    ` → sm ${vis.rSm} / md ${vis.rMd}`);
+  ok(/transform|box-shadow/.test(vis.btnTransition), '★ 负对照：按钮的 transition 真写了 transform/阴影',
+    ` → ${vis.btnTransition}`);
+  ok(vis.fsTitle !== vis.fsBody, '★ 负对照：标题和正文字号真的不一样（否则分级是假的）',
+    ` → 标题 ${vis.fsTitle} / 正文 ${vis.fsBody}`);
+  // 材质：header 必须是毛玻璃。注意 --no-gpu / 软件渲染下 blur 可能被降级，
+  // 所以这里只要求「写了 backdrop-filter」，并同时打印实际值供人工判断。
+  ok(/blur/.test(vis.hdrBackdrop), '★ header 用了毛玻璃（backdrop-filter: blur）',
+    ` → ${vis.hdrBackdrop || '(空)'}；底色 ${vis.hdrBg}`);
+
+  // ★ 深浅色一致性：CSS 的 prefers-color-scheme 和主进程 nativeTheme 必须**指向同一个主题**。
+  //   踩过的坑：窗口 backgroundColor 写死浅色，而界面因为系统是深色而渲染成深色 →
+  //   「开窗先闪一下白再变黑」。这条断言就是钉这个不一致。
+  const themeProbe = await sw.webContents.executeJavaScript(
+    `window.matchMedia('(prefers-color-scheme: dark)').matches`
+  ).catch(() => null);
+  const sysDark = require('electron').nativeTheme.shouldUseDarkColors;
+  ok(themeProbe === sysDark, '★ 负对照：界面认的深色状态 == 主进程认的深色状态（否则开窗会闪白）',
+    ` → 界面 ${themeProbe} / 主进程 ${sysDark}`);
+  // 深色下必须真的是深底浅字（顺便钉住 token 真的换了值）
+  if (themeProbe === true) {
+    const lum = await sw.webContents.executeJavaScript(`(() => {
+      const c = getComputedStyle(document.body).backgroundColor;
+      const m = /rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(c);
+      return m ? (+m[1] + +m[2] + +m[3]) / 3 : NaN;
+    })()`);
+    ok(!Number.isNaN(lum) && lum < 110, '★ 深色模式下 body 底色确实是深色（不是闪回白）',
+      ` → 平均亮度 ${lum}`);
+  }
+
+  log('⑧b⁴ᐩᐩ 按压反馈：是 pointerdown 触发，不是等 click');
+  // ⚠ 这里必须**等过渡走完**再量 transform。
+  //   第一版是「发完 pointerdown 立刻量」，量到的是 matrix(1,0,0,1,0,0)（= scale 1，没变），
+  //   因为 transform 有 110ms 过渡，那一刻动画才刚开始。断言写的是 `!== 'none'`，
+  //   于是「什么都没变」也能通过 —— 又是一条装饰性断言，自己抓出来。
+  //   现在要求：量到的 scale **严格小于 1**。
+  const press = await sw.webContents.executeJavaScript(`(async () => {
+    const btn = document.querySelector('#focus-presets button') || document.querySelector('button');
+    if (!btn) return { missing: true };
+    const has = () => btn.classList.contains('pressing');
+    const before = has();
+    // 只发 pointerdown，不发 pointerup —— 模拟「手指刚按下去」
+    btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+    const downNow = has();
+    const tfImmediate = getComputedStyle(btn).transform;
+    // 等过渡真正落地（--t-fast 是 110ms，留足余量）
+    await new Promise((r) => setTimeout(r, 260));
+    const tfSettled = getComputedStyle(btn).transform;
+    const scaleOf = (t) => {
+      const m = /matrix\\(([-\\d.e]+),[^)]*\\)/.exec(t || '');
+      return m ? parseFloat(m[1]) : NaN;
+    };
+    btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+    return { before, downNow, tfImmediate, tfSettled, scale: scaleOf(tfSettled), afterUp: has() };
+  })()`);
+  if (press.missing) {
+    ok(false, '★ 找不到任何按钮，没法验证按压反馈');
+  } else {
+    ok(press.before === false, '★ 负对照：没按之前不带 pressing 类');
+    ok(press.downNow === true, '★ 按下的一瞬间（pointerdown）就带上了 pressing 类');
+    ok(press.afterUp === false, '★ 松手后 pressing 类被摘掉（不会一直按着）');
+    // 真正的负对照：缩放必须真的变小，量的是绝对数值，不是「不为 none」
+    ok(press.scale < 1, '★ 按下时真的缩小了（scale < 1，量到的是绝对数值）',
+      ` → 立刻 ${press.tfImmediate} → 稳定后 ${press.tfSettled}（scale=${press.scale}）`);
+  }
+
+  // 负对照：无障碍「减少动态效果」时，按压位移必须被取消
+  //   —— 本机默认不开，所以这条只能验「样式表里确实写了这段兜底」
+  const a11y = await sw.webContents.executeJavaScript(`(() => {
+    let found = 0;
+    for (const sh of document.styleSheets) {
+      let rules; try { rules = sh.cssRules; } catch { continue; }
+      for (const r of rules) {
+        if (r.type === CSSRule.MEDIA_RULE && /prefers-reduced-motion/.test(r.conditionText || '')) {
+          found++;
+          const t = r.cssText || '';
+          return {
+            found: true,
+            // 必须同时出现：取消 transform + 保留淡入
+            killsTransform: /transform:\\s*none/.test(t),
+            hasFade: /picker-fade|opacity/.test(t),
+            mentionsPressing: /pressing/.test(t),
+          };
+        }
+      }
+    }
+    return { found: false };
+  })()`);
+  ok(a11y.found === true, '★ 样式表里有 prefers-reduced-motion 兜底块');
+  if (a11y.found) {
+    ok(a11y.killsTransform === true, '★ 负对照：「减少动态效果」时位移被取消（transform:none）');
+    ok(a11y.hasFade === true, '★ 但保留了透明度变化（反馈不能消失，只是变温和）');
+    ok(a11y.mentionsPressing === true, '★ 负对照：JS 加的 .pressing 也在取消名单里（否则那条路会漏）');
+  }
+
   log('⑧b⁗ 选「25 分钟」');
   const preset = await sw.webContents.executeJavaScript(`(async () => {
     const b = [...document.querySelectorAll('#focus-presets button')]
@@ -2732,6 +2869,66 @@ if (!gotLock) {
         } catch (err) {
           console.error('[main] 自动打开软件选择器失败：', err && err.message);
         }
+      }, 3000);
+    }
+
+    // 开发便利：把设置窗口的三个页面各截一张（v4 批次 2 视觉验收用）。
+    //   PET_SHOT_PAGES=1 npm start -- --no-gpu
+    // ⚠ 纯截图，不改任何数据；文件名带 pages- 前缀，和单张的选择器截图区分开。
+    //
+    // ⚠⚠ 踩过的坑：一开始连着调三次 `settingsWindow.open(mode)` 就截，
+    //    结果三张图**字节数完全一样**（23130）—— 因为 `open()` 在窗口已存在时
+    //    直接 `return win`，**根本不看 startMode**，所以三张都是「列表」页。
+    //    「三张图一样大」就是最好的报警信号；现在改成：切模式 → 轮询确认界面真的换了 → 再截。
+    if (!app.isPackaged && process.env.PET_SHOT_PAGES === '1') {
+      setTimeout(async () => {
+        const fs = require('fs');
+        const path = require('path');
+        const dir = path.join(__dirname, '..', '..', 'tmp');
+        const win = settingsWindow.open('list');
+        if (!win) return;
+        // 先等第一页渲染完
+        await new Promise((r) => {
+          if (win.webContents.isLoading()) win.webContents.once('did-finish-load', r);
+          else r();
+        });
+        const sizes = [];
+        const shoot = async (mode, name) => {
+          try {
+            // 走真正的切换通道（和用户点按钮同一条路），不要靠 open() 的 startMode
+            settingsWindow.setMode(mode);
+            // 轮询等界面切过去（比死等一个固定毫秒数可靠）
+            const deadline = Date.now() + 5000;
+            let switched = false;
+            while (Date.now() < deadline) {
+              await new Promise((r) => setTimeout(r, 200));
+              const cur = await win.webContents.executeJavaScript(`(() => {
+                const vis = (id) => { const el = document.getElementById(id); return !!el && !el.classList.contains('hidden'); };
+                return { week: vis('week'), focus: vis('focus-page') };
+              })()`).catch(() => null);
+              if (!cur) continue;
+              const want = mode === 'week' ? cur.week : mode === 'focus' ? cur.focus : (!cur.week && !cur.focus);
+              if (want) { switched = true; break; }
+            }
+            await new Promise((r) => setTimeout(r, 500)); // 让过渡走完
+            const img = await win.webContents.capturePage();
+            const buf = img.toPNG();
+            sizes.push(buf.length);
+            fs.writeFileSync(path.join(dir, name), buf);
+            console.log(`[main] 截图已存：${name}（${buf.length} 字节${switched ? '' : ' ⚠ 界面可能没切过去'}）`);
+          } catch (e) {
+            console.error(`[main] 截 ${mode} 失败：`, e && e.message);
+          }
+        };
+        await shoot('list', 'v4-pages-list.png');
+        await shoot('week', 'v4-pages-week.png');
+        await shoot('focus', 'v4-pages-focus.png');
+        // 三张一样大 = 没切成功，明确喊出来，别让主人对着一张假图验收
+        const uniq = new Set(sizes);
+        if (sizes.length === 3 && uniq.size < 3) {
+          console.error(`[main] ⚠⚠ 三页截图有重复（字节数 ${sizes.join('/')}），说明模式没切过去！`);
+        }
+        console.log('[main] 三页截图完成');
       }, 3000);
     }
 
