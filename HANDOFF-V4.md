@@ -61,12 +61,33 @@
 | 2.6 | 退出专注改「按住进度条」+ 专注页整体打磨 | ✅ | `9a1f95f` |
 | 2.6⁺ | 进度条改**蓝色** + 修掉按钮被 `.danger` 盖住的 bug | ✅ | `4afa448` |
 | 3-a | 动效**纯函数**：`spring.js` + `rubberband.js` + 自检 | ✅ 代码+自检全绿 | 已提交 |
-| **3-b** | **接进桌宠拖拽**：松手速度衔接 + 拖出边界橡皮筋 | ⏳ **下一步** | — |
-| 3-c | 设置窗口改**侧边栏** + 面板空间一致 + 减少动效 | ⏳ | — |
+| 3-b | 接进**桌宠拖拽**：松手速度衔接 + 拖出边界橡皮筋 | ✅ 代码+回归全绿 | 已提交 |
+| **3-c** | 设置窗口改**侧边栏** + 面板空间一致 + 其余窗口减少动效 | ⏳ **下一步** | — |
 
-> ⚠ 3-a 只是**纯数学**，界面行为一点没变 —— 所以它不需要真机验收，
-> 看曲线图和自检数字就够。**3-b 才动界面**，那一步必须主人亲手拖一次才算完
+> ⚠ 3-a 只是**纯数学**，界面行为一点没变 —— 不需要真机验收。
+> **3-b 动了界面**（拖拽手感），**必须主人亲手拖一次才算完**
 > （拖拽手感合成事件测不了，见 §7）。
+
+### 批次 3-b 做了什么（2026-10-15）
+
+- **`src/main/pet-drag.js`（新，纯函数）**：`rubberbandAxis`（拖出边界时的渐进阻力）、
+  `releasePlan`（松手往哪去、弹不弹）、`createGlide` / `stepGlide`（滑行状态机）。
+- **接进 `main.js` 的拖拽**：
+  · `pet:drag-move` 记最近 16 个位置样本，并给越界位置加渐进阻力；
+  · `pet:drag-end` 估手指速度（`estimateVelocity`，只认最近 100ms）→ 算出落点 → 起滑行；
+  · `pet:drag-start` **立刻停掉滑行**（抓住正在滑的桌宠要能马上接管 = 可打断性）。
+- **`movePet(x, y, opts)` 默认会打断滑行**（托盘「重置位置」、自检复位不该被动画抢回去）；
+  滑行自己每帧调用时传 `{ keepGlide: true }`。
+- **减少动效**：渲染进程把 `prefers-reduced-motion` 一起报上来（主进程读不到媒体查询），
+  开了就**直接落位**，一步都不滑；越界照样夹回屏幕内。
+- 新增自检：
+  · `npm run test:pet-drag`（纯函数）**48/0，负对照 5/5**
+  · `npm run test:glide`（端到端，真跑主进程动画）**12/0**
+  · `test:spring` 涨到 **40/0**（新增「样本太旧 → 速度 0」一节）
+
+**★ 行为变化（要主人点头）**：以前桌宠能被拖到屏幕外停着；现在拖出边界有阻力、
+松手自动弹回屏幕内 —— **再也丢不掉它了**。不喜欢的话去掉 `pet-drag.js` 里
+`rubberbandAxis` 那两行即可。
 
 ### 批次 3-a 做了什么（2026-10-15）
 
@@ -167,6 +188,8 @@ npm run test:changed-check     # 17 通过 / 0 失败 · 负对照 8/8
 |---|---|
 | `spring.js` | spring |
 | `rubberband.js` | rubberband |
+| `pet-drag.js` | pet-drag · sync · glide · drag |
+| `renderer/pet/` · `preload.js` | sync · gaze · glide · exit · drag |
 | `focus/hosts.js` | focus-hosts · focus-helper · focus-intercept · focusmode-e2e |
 | `focus/timer.js` | focus-timer · focus-stop-ui · focusmode-e2e |
 | `focus/blacklist.js` | focus-blacklist · apps · picker-ui · focusmode-e2e |
@@ -188,9 +211,10 @@ npm run test:quit             # 8
 npm run test:week             # 53
 npm run test:nl-time          # 23
 
-# 动效纯函数（v4 批次 3-a）
-npm run test:spring           # 37（可打断 / 速度衔接 / 帧率无关 / 大 dt 不炸，负对照 8/8）
+# 动效纯函数（v4 批次 3-a / 3-b）
+npm run test:spring           # 40（可打断 / 速度衔接 / 帧率无关 / 大 dt 不炸，负对照 9/9）
 npm run test:rubberband       # 21（渐进阻力 / 不超上界 / 对称，负对照 5/5）
+npm run test:pet-drag         # 48（越界阻力 / 松手落点 / 滑行状态机，负对照 5/5）
 
 # 聊天大脑
 npm run test:brain-local      # 19
@@ -223,6 +247,7 @@ npm run test:scheduler-e2e
 npm run test:focus            # 20（窗口**焦点**自检，别和专注模式搞混）
 npm run test:sync             # 10
 npm run test:gaze             # 6
+npm run test:glide            # 12（松手惯性 / 橡皮筋 / 减少动效 / 可打断，真跑主进程动画）
 npm run test:exit             # 点真退出按钮，会真的退出（正常）
 npm run test:drag             # 性能基准，只印测量值、不印通过数（正常）
 ```

@@ -89,6 +89,10 @@ function isSettled(state, target, eps) {
 // samples: [{ x, t }]，t 是毫秒时间戳，按时间升序。
 // 只取**最近 windowMs 毫秒内**的样本：松手前如果手已经停了，速度就该是 0，
 // 不能拿半秒前的移动当成「还在飞」。
+//
+// ★ opts.now（毫秒）必须传：鼠标不动就不会发 mousemove，所以「最后一笔样本」
+//   可能已经是很久以前的了。不传 now 的话，「快拖一下 → 按住不动半秒 → 松手」
+//   会被算成「还在以刚才那个速度飞」，桌宠会莫名其妙窜出去。
 function estimateVelocity(samples, opts = {}) {
   const win = isNum(opts.windowMs) && opts.windowMs > 0 ? opts.windowMs : 100;
   const arr = Array.isArray(samples)
@@ -97,6 +101,10 @@ function estimateVelocity(samples, opts = {}) {
   if (arr.length < 2) return 0;
 
   const last = arr[arr.length - 1];
+
+  // ★ 最后一笔样本太旧 → 手其实已经停了
+  if (isNum(opts.now) && opts.now - last.t > win) return 0;
+
   let first = null;
   for (let i = arr.length - 1; i >= 0; i--) {
     if (last.t - arr[i].t > win) break;

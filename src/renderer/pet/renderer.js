@@ -795,7 +795,13 @@ function setupInteractions(app, model) {
     // 松手，视线跟随恢复（下一帧库会自动挂回去）
     setGazeFollowing(true);
     document.body.style.cursor = overPet ? 'grab' : 'default';
-    if (window.petAPI) window.petAPI.dragEnd();
+    // v4 批次 3-b：把「系统有没有要求减少动态效果」告诉主进程 ——
+    // 松手后的惯性滑行是主进程在跑，它读不到这个媒体查询。
+    if (window.petAPI) {
+      let reducedMotion = false;
+      try { reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* 老环境没有 matchMedia */ }
+      window.petAPI.dragEnd({ reducedMotion });
+    }
 
     // 位移很小 = 点击（换表情），位移大 = 拖拽
     const moved = downAt ? Math.abs(e.screenX - downAt.x) + Math.abs(e.screenY - downAt.y) : 999;

@@ -26,6 +26,8 @@ const week = require('./week');             // 周视图自检要拿它做交叉
 const { placeNear } = require('./place');   // 自检里要复算一遍设置窗口该待的位置
 const brain = require('./brain');
 const aiConfig = require('./ai-config');
+const petDrag = require('./pet-drag');            // v4 批次 3-b：拖拽手感（纯函数）
+const { estimateVelocity } = require('./spring'); // v4 批次 3-b：松手时把手指速度算出来
 
 const log = (m) => console.log('[main] ' + m);
 
@@ -49,6 +51,10 @@ let quitting = false; // 真退出 vs 收进托盘，靠它区分
 let dragOffset = null; // 拖拽时鼠标相对窗口左上角的偏移
 let dragProbe = null;  // 拖拽自检用：非 null 时逐次记录（见 runDragSelfTest）
 let saveTimer = null;
+// v4 批次 3-b：松手之后的「惯性滑行 / 弹回边界」
+let glideTimer = null;   // 动画循环的定时器
+let glide = null;        // 当前滑行状态（null = 没在滑）
+let dragSamples = [];    // 本次拖拽最近若干个位置，松手时用来估速度
 
 // ---------- 位置记忆 ----------
 
@@ -179,6 +185,11 @@ function createWindow() {
     setTimeout(runGazeSelfTest, 800);
   }
 
+  // 开发自检：松手惯性 + 橡皮筋边界（见 runGlideSelfTest，v4 批次 3-b）。
+  if (!app.isPackaged && process.env.PET_SELFTEST === 'glide') {
+    setTimeout(runGlideSelfTest, 800);
+  }
+
   // 开发自检：退出按钮（见 runExitButtonSelfTest）。
   if (!app.isPackaged && process.env.PET_SELFTEST === 'exit') {
     setTimeout(runExitButtonSelfTest, 800);
@@ -292,8 +303,12 @@ function showPet() {
 //
 //   尺寸用启动时记下的标称值（petSize），不用 getSize() 现读 ——
 //   现读会读到已经被撑大的值，越修越大。
-function movePet(x, y) {
+//   ★ v4 批次 3-b 起：movePet 默认会**打断正在进行的惯性滑行** ——
+//     托盘「重置位置」、自检复位这些「有人主动搬它」的场合，不该被动画抢回去。
+//     滑行自己每帧调用时必须传 { keepGlide: true }，否则会把自己停掉。
+function movePet(x, y, opts = {}) {
   if (!win || win.isDestroyed()) return;
+  if (!opts.keepGlide) stopGlide();
   const px = Math.round(x);
   const py = Math.round(y);
   if (petSize) {
@@ -302,6 +317,73 @@ function movePet(x, y) {
     // 还没记下标称尺寸（理论上不会发生）时退回旧行为，至少位置是对的
     win.setPosition(px, py);
   }
+}
+
+// ---------- v4 批次 3-b：松手之后的惯性滑行 / 弹回边界 ----------
+//
+// 手感逻辑（越界阻力、松手往哪去、弹不弹）全在 ./pet-drag.js 里，是纯函数、可单测。
+// 这里只负责「按帧推进 + 真的搬窗口」。
+
+// 窗口左上角的合法范围：整个窗口都要在工作区内。
+// 多显示器用「离窗口最近的那块屏」的工作区，所以拖到副屏也是按副屏算。
+function petDragBounds() {
+  if (!win || win.isDestroyed()) return null;
+  const [w, h] = petSize || win.getSize();
+  const [cx, cy] = win.getPosition();
+  const wa = screen.getDisplayNearestPoint({
+    x: cx + Math.round(w / 2),
+    y: cy + Math.round(h / 2),
+  }).workArea;
+  const minX = wa.x;
+  const minY = wa.y;
+  // 窗口比工作区还大时（极端分辨率）min 和 max 会打架，这里保证 max >= min
+  return {
+    minX, minY,
+    maxX: Math.max(minX, wa.x + wa.width - w),
+    maxY: Math.max(minY, wa.y + wa.height - h),
+    size: [w, h],
+  };
+}
+
+function stopGlide() {
+  if (glideTimer) { clearTimeout(glideTimer); glideTimer = null; }
+  glide = null;
+}
+
+function startGlide(plan) {
+  stopGlide();
+  if (!plan || !win || win.isDestroyed()) return;
+
+  // 「减少动态效果」或本来就已经在落点上 → 一步到位，不起动画
+  if (plan.instant) {
+    movePet(plan.targetX, plan.targetY, { keepGlide: true });
+    savePosition();
+    return;
+  }
+  glide = petDrag.createGlide(plan);
+  if (glide.done) { savePosition(); return; }
+
+  let last = Date.now();
+  const tick = () => {
+    glideTimer = null;
+    if (!glide || !win || win.isDestroyed()) { glide = null; return; }
+    const now = Date.now();
+    // 上限 0.1 秒：窗口被系统挂起再唤醒时，这个 dt 可能大得离谱
+    const dt = Math.min(Math.max((now - last) / 1000, 0), 0.1);
+    last = now;
+    glide = petDrag.stepGlide(glide, dt);
+    if (glide.done) {
+      // ★ 结束时**对齐到落点**：弹簧的「到位」判定留了 0.5px 余量，
+      //   不对齐的话窗口可能停在边界外零点几像素。
+      movePet(glide.targetX, glide.targetY, { keepGlide: true });
+      glide = null;
+      savePosition();
+      return;
+    }
+    movePet(glide.x, glide.y, { keepGlide: true });
+    glideTimer = setTimeout(tick, 16);
+  };
+  glideTimer = setTimeout(tick, 16);
 }
 
 function togglePet() {
@@ -362,15 +444,35 @@ function createTray() {
 // 拖拽：渲染进程给的是鼠标在屏幕上的坐标，这里换算成窗口左上角坐标
 ipcMain.on('pet:drag-start', (_e, p) => {
   if (!win || win.isDestroyed()) return;
+  // ★ 抓住正在滑行的桌宠 = 立刻接管（可打断性）。
+  //   不这么做的话，手指刚碰到它、它还在按上一段惯性跑，手感是「抓不住」。
+  stopGlide();
+  dragSamples = [];
   const [wx, wy] = win.getPosition();
   dragOffset = { dx: Math.round(p.x) - wx, dy: Math.round(p.y) - wy };
 });
 
 ipcMain.on('pet:drag-move', (_e, p) => {
   if (!win || win.isDestroyed() || !dragOffset) return;
-  const tx = Math.round(p.x) - dragOffset.dx;
-  const ty = Math.round(p.y) - dragOffset.dy;
+  const wantX = Math.round(p.x) - dragOffset.dx;
+  const wantY = Math.round(p.y) - dragOffset.dy;
+
+  // v4 批次 3-b：拖出屏幕边界时给「渐进阻力」（不是硬停）。
+  // 界内时 rubberbandAxis 原样返回，所以正常拖动一点变化都没有。
+  const bounds = petDragBounds();
+  let tx = wantX, ty = wantY;
+  if (bounds) {
+    tx = petDrag.rubberbandAxis(wantX, bounds.minX, bounds.maxX, bounds.size[0]);
+    ty = petDrag.rubberbandAxis(wantY, bounds.minY, bounds.maxY, bounds.size[1]);
+  }
+
   movePet(tx, ty);   // 注意：这里不能用 setPosition，会把窗口撑大（见 movePet）
+
+  // 记样本用于松手时估速度。记的是**手指想去的位置**（wantX/wantY），
+  // 因为要的是手指速度，不是被橡皮筋压过之后的速度。
+  dragSamples.push({ x: wantX, y: wantY, t: Date.now() });
+  if (dragSamples.length > 16) dragSamples.shift();
+
   // 自检时才记录，平时零开销
   if (dragProbe) {
     const [ax, ay] = win.getPosition();
@@ -379,9 +481,29 @@ ipcMain.on('pet:drag-move', (_e, p) => {
   }
 });
 
-ipcMain.on('pet:drag-end', () => {
+ipcMain.on('pet:drag-end', (_e, p = {}) => {
   dragOffset = null;
-  savePosition();
+
+  const bounds = petDragBounds();
+  if (!win || win.isDestroyed() || !bounds) {
+    dragSamples = [];
+    savePosition();
+    return;
+  }
+
+  // 松手速度：只取最近 100ms（手停了速度就该是 0，不能拿半秒前的移动当「还在飞」）。
+  // ★ 必须带上 now：鼠标不动就不发 mousemove，最后一笔样本可能已经过去很久了。
+  const now = Date.now();
+  const vx = estimateVelocity(dragSamples.map((s) => ({ x: s.x, t: s.t })), { maxAbs: petDrag.MAX_SPEED, now });
+  const vy = estimateVelocity(dragSamples.map((s) => ({ x: s.y, t: s.t })), { maxAbs: petDrag.MAX_SPEED, now });
+  dragSamples = [];
+
+  const [x, y] = win.getPosition();
+  const plan = petDrag.releasePlan({
+    x, y, vx, vy, bounds,
+    reducedMotion: Boolean(p && p.reducedMotion),
+  });
+  startGlide(plan);
 });
 
 // 动态鼠标穿透：true = 鼠标穿过去（点在桌面上），false = 桌宠接住鼠标
@@ -747,6 +869,13 @@ async function runDragSelfTest() {
   // ② 逐个频率测：窗口真的在动
   for (const hz of DRAG_TEST_RATES) {
     const stepMs = hz > 0 ? Math.max(1, Math.round(1000 / hz)) : 0;
+    // ★ v4 批次 3-b：先挪到屏幕左上角附近再开始。
+    //   默认位置在右下角（贴着屏幕底边），往下拖 120px 会撞到工作区边界，
+    //   而边界外是有「橡皮筋阻力」的 —— 那样量到的目标位置误差就不再是
+    //   「搬窗口准不准」，而是「被橡皮筋压了多少」，两件事混在一起就看不出来了。
+    const wa = screen.getPrimaryDisplay().workArea;
+    movePet(wa.x + 80, wa.y + 80);
+    await sleep(200);
     const [wx0, wy0] = win.getPosition();
     const start = { x: wx0 + 100, y: wy0 + 100 }; // 假装鼠标在窗口内 100,100 处按下
 
@@ -777,6 +906,14 @@ async function runDragSelfTest() {
     const st = statOf(res.samples);
     const perSec = res.ms > 0 ? (probe.moves.length / (res.ms / 1000)) : 0;
 
+    // ★ v4 批次 3-b：松手之后桌宠还会惯性滑一段，所以 250ms 后量到的位置
+    //   已经不等于「松手那一刻」的位置了。这个自检测的是**拖拽期间的搬窗口保真度**，
+    //   所以位移取「最后一次 dragMove 之后窗口的实际位置」，
+    //   滑到哪去了另外单独报一行，不混进这个数。
+    const lastMove = probe.moves[probe.moves.length - 1];
+    const dragDx = lastMove ? lastMove.ax - wx0 : 0;
+    const dragDy = lastMove ? lastMove.ay - wy0 : 0;
+
     // 跟踪误差：主进程算出来的目标位置 vs 理论值（理论值 = 起点 + 步长×步数）
     let trackMax = 0;
     let landMax = 0;
@@ -789,7 +926,8 @@ async function runDragSelfTest() {
 
     const label = hz > 0 ? `${hz}Hz` : '连续发（极端）';
     log(`【拖拽·${label}】收到 ${probe.moves.length} 次移动 → 搬窗口 ${probe.moves.length} 次（实测 ${perSec.toFixed(0)} 次/秒）`);
-    log(`   窗口位移 ${wxEnd - wx0},${wyEnd - wy0}（期望 ${DX * STEPS},${DY * STEPS}）· 目标位置误差 ${trackMax.toFixed(0)}px · 落地误差 ${landMax.toFixed(0)}px`);
+    log(`   拖拽位移 ${dragDx},${dragDy}（期望 ${DX * STEPS},${DY * STEPS}）· 目标位置误差 ${trackMax.toFixed(0)}px · 落地误差 ${landMax.toFixed(0)}px`);
+    log(`   松手后惯性滑到 ${wxEnd - wx0},${wyEnd - wy0}（比松手时多走了 ${(wxEnd - wx0) - dragDx},${(wyEnd - wy0) - dragDy}px）`);
     if (st) log(`   帧间隔 中位 ${st.med.toFixed(1)}ms · p90 ${st.p90.toFixed(1)}ms · 最大 ${st.max.toFixed(1)}ms · 掉帧(>50ms) ${st.over50}/${st.n}`);
     if (base && st) {
       const r = base.med > 0 ? st.med / base.med : 0;
@@ -869,6 +1007,162 @@ async function runGazeSelfTest() {
 
   log(`===== 视线跟随自检结束：${pass} 通过 / ${fail} 失败 =====`);
   log(fail === 0 ? '结论：拖拽时视线跟随能正确开关' : '结论：有失败项，拖拽时角色仍会抽动');
+  quitAfterSelfTest();
+}
+
+// ---------- 开发自检：松手惯性 + 橡皮筋边界（v4 批次 3-b）----------
+//
+// ── 为什么必须端到端 ──
+//   手感逻辑本身是纯函数，已经有单测（`npm run test:pet-drag`）。
+//   但「主进程有没有真的把它接上」纯函数测不到 —— 这正是项目那条老坑：
+//   改了「谁 require 谁 / 谁调谁」这类接线，纯函数自检永远是绿的。
+//
+// ── 为什么还是用 petAPI 而不是真鼠标 ──
+//   和别的拖拽自检一样：Electron 合成鼠标事件的 screenX/screenY 恒为 0，
+//   拿它拖拽测出来的是假的。所以直接调 petAPI 把拖拽喂进去，
+//   松手之后的动画是**主进程真的在跑**，这部分是真实行为。
+//
+// ── 这一套能抓到什么（都是单测抓不到的）──
+//   ① 松手后到底有没有继续走、走多远
+//   ② 手停了再松手，会不会莫名其妙窜出去（估速度的 staleness）
+//   ③ 橡皮筋有没有真的接上（拖出边界时窗口能不能越过去）
+//   ④ 「减少动态效果」这条开关有没有真的生效
+//   ⑤ 抓住正在滑行的桌宠，滑行会不会立刻停（可打断性）
+async function runGlideSelfTest() {
+  let pass = 0, fail = 0;
+  const ok = (cond, label, extra = '') => {
+    if (cond) { pass++; log(`  ✓ ${label}${extra}`); }
+    else { fail++; log(`  ✗ ${label}  ← 失败${extra}`); }
+  };
+
+  log('===== 松手惯性 / 橡皮筋 自检开始 =====');
+  if (!win || win.isDestroyed()) { log('✗ 没有窗口'); return quitAfterSelfTest(); }
+  if (!(await waitForPet())) { log('✗ 等不到渲染进程就绪'); return quitAfterSelfTest(); }
+
+  const wa = screen.getPrimaryDisplay().workArea;
+  const [W, H] = petSize || win.getSize();
+  const BOUNDS = { minX: wa.x, maxX: wa.x + wa.width - W, minY: wa.y, maxY: wa.y + wa.height - H };
+
+  // 挪到「四周都有余量」的位置再测，免得默认的右下角一上来就贴着边界
+  const home = async () => {
+    movePet(Math.round(wa.x + (wa.width - W) / 2), Math.round(wa.y + (wa.height - H) / 2));
+    await sleep(220);
+    return win.getPosition();
+  };
+  const posX = () => win.getPosition()[0];
+  const posY = () => win.getPosition()[1];
+  const inside = (x, y) => x >= BOUNDS.minX && x <= BOUNDS.maxX && y >= BOUNDS.minY && y <= BOUNDS.maxY;
+
+  // 合成一次拖拽：dx/dy 是「每步手指走多少像素」，stepMs 决定速度
+  const drag = async ({ steps, dx, dy, stepMs, pauseBeforeRelease = 0, reducedMotion = false }) => {
+    const [wx, wy] = win.getPosition();
+    const sx = wx + 100;
+    const sy = wy + 100;
+    await win.webContents.executeJavaScript(`(async () => {
+      const api = window.petAPI;
+      const sx = ${sx}, sy = ${sy};
+      api.dragStart({ x: sx, y: sy });
+      for (let i = 1; i <= ${steps}; i++) {
+        api.dragMove({ x: sx + ${dx} * i, y: sy + ${dy} * i });
+        await new Promise((r) => setTimeout(r, ${stepMs}));
+      }
+      ${pauseBeforeRelease > 0 ? `await new Promise((r) => setTimeout(r, ${pauseBeforeRelease}));` : ''}
+      api.dragEnd({ reducedMotion: ${reducedMotion} });
+      return true;
+    })()`);
+    return { x: posX(), y: posY() };
+  };
+
+  // ===== ① 松手后还要继续走（惯性滑行）=====
+  log('');
+  log('① 快速往右甩一下再松手');
+  {
+    await home();
+    // 6px / 10ms = 600px/s
+    const at = await drag({ steps: 20, dx: 6, dy: 0, stepMs: 10 });
+    await sleep(750);
+    const after = posX();
+    await sleep(450);
+    const settled = posX();
+    log(`   松手时 x=${at.x} → 750ms 后 x=${after} → 再等 450ms x=${settled}`);
+    ok(after - at.x > 20, '★ 松手后还继续往右滑了一段', `多走了 ${after - at.x}px`);
+    ok(Math.abs(settled - after) < 4, '★ 会自己停稳（不再漂）', `450ms 内只动了 ${Math.abs(settled - after)}px`);
+    ok(inside(settled, posY()), '停稳后整个窗口在屏幕内', `x=${settled} ∈ [${BOUNDS.minX},${BOUNDS.maxX}]`);
+  }
+
+  // ===== ② 负对照：手停住了再松手，不许窜出去 =====
+  log('');
+  log('② ★ 负对照：快速甩完之后「按住不动」300ms 再松手');
+  {
+    await home();
+    const at = await drag({ steps: 20, dx: 6, dy: 0, stepMs: 10, pauseBeforeRelease: 300 });
+    await sleep(750);
+    const after = posX();
+    log(`   松手时 x=${at.x} → 750ms 后 x=${after}`);
+    ok(Math.abs(after - at.x) < 8,
+      '★ 手已经停了 → 松手后基本不动（不许拿 300ms 前的速度当成「还在飞」）',
+      `只走了 ${Math.abs(after - at.x)}px`);
+  }
+
+  // ===== ③ 橡皮筋：拖出右边界 =====
+  log('');
+  log('③ 一直往右拖，拖出屏幕右边界');
+  {
+    await home();
+    const at = await drag({ steps: 60, dx: 12, dy: 0, stepMs: 10 });
+    const over = at.x - BOUNDS.maxX;
+    log(`   松手时 x=${at.x}（边界 ${BOUNDS.maxX}）· 超出 ${over}px · 手指一共拖了 ${60 * 12}px`);
+    ok(over > 5, '★ 越界时窗口还能往外挪一点（不是硬停在边界上）', `超出 ${over}px`);
+    ok(over < W, '★ 但超出得远小于一个窗口宽（拖不飞）', `${over}px < ${W}px`);
+    ok(over < 60 * 12 - (BOUNDS.maxX - (Math.round(wa.x + (wa.width - W) / 2))),
+      '★ 超出量比手指的超出量小（有阻力）',
+      `窗口超出 ${over}px vs 手指超出 ${60 * 12 - (BOUNDS.maxX - Math.round(wa.x + (wa.width - W) / 2))}px`);
+
+    await sleep(900);
+    const settled = { x: posX(), y: posY() };
+    log(`   停稳后 x=${settled.x},y=${settled.y}`);
+    ok(inside(settled.x, settled.y), '★ 松手后自己弹回屏幕内（不会停在边界外）',
+      `x=${settled.x} ≤ ${BOUNDS.maxX}`);
+  }
+
+  // ===== ④ 减少动态效果 =====
+  log('');
+  log('④ 系统开了「减少动态效果」时松手');
+  {
+    await home();
+    const at = await drag({ steps: 20, dx: 6, dy: 0, stepMs: 10, reducedMotion: true });
+    await sleep(700);
+    const after = posX();
+    log(`   松手时 x=${at.x} → 700ms 后 x=${after}`);
+    ok(Math.abs(after - at.x) < 4, '★ 直接落位、一点都不滑', `只动了 ${Math.abs(after - at.x)}px`);
+    ok(inside(after, posY()), '落位后仍在屏幕内');
+  }
+
+  // ===== ⑤ 可打断：抓住正在滑行的桌宠 =====
+  log('');
+  log('⑤ 滑行途中再按下去（可打断性）');
+  {
+    await home();
+    await drag({ steps: 20, dx: 6, dy: 0, stepMs: 10 });
+    await sleep(80); // 让它滑起来
+    const moving = posX();
+    await sleep(60);
+    const stillMoving = posX();
+    // 立刻抓住
+    await win.webContents.executeJavaScript(`(() => { window.petAPI.dragStart({ x: 0, y: 0 }); return true; })()`);
+    await sleep(60);
+    const grabbed1 = posX();
+    await sleep(400);
+    const grabbed2 = posX();
+    log(`   滑行中 ${moving} → ${stillMoving}（在动=${stillMoving !== moving}）· 抓住后 ${grabbed1} → ${grabbed2}`);
+    ok(stillMoving !== moving, '前提：抓住之前它确实在滑', `${moving} → ${stillMoving}`);
+    ok(Math.abs(grabbed2 - grabbed1) < 4, '★ 抓住之后立刻停下（不会跟手指抢）',
+      `抓住后 400ms 只动了 ${Math.abs(grabbed2 - grabbed1)}px`);
+  }
+
+  log('');
+  log(`===== 松手惯性 / 橡皮筋 自检结束：${pass} 通过 / ${fail} 失败 =====`);
+  log(fail === 0 ? '结论：松手惯性、橡皮筋边界、减少动效、可打断 都已接上' : '结论：有失败项，拖拽手感没接对');
   quitAfterSelfTest();
 }
 
@@ -1167,7 +1461,15 @@ async function runSyncSelfTest() {
   const btnCx = (s) => s.settings.cx;
 
   // 合成一次拖拽（和拖拽自检同一套路：直接调 petAPI，绕开合成鼠标事件）
+  // ★ v4 批次 3-b：每轮开始先摆回同一个起点。
+  //   松手之后桌宠还会惯性滑一段，滑到哪儿跟「松手时的位置」有关；
+  //   不固定起点的话，三轮会越滑越远、最后贴到屏幕边上，
+  //   量出来的窗口尺寸就会带上「位置不同导致的 DPI 取整差异」（实测差 1px），
+  //   于是「三轮尺寸一致」这条断言变成了测位置、不是测尺寸。
   const dragOnce = async (steps) => {
+    const home = loadPosition();
+    movePet(home.x, home.y);
+    await sleep(220);
     const [wx0, wy0] = win.getPosition();
     const sx = wx0 + 100;
     const sy = wy0 + 100;
@@ -1265,6 +1567,14 @@ async function runSyncSelfTest() {
   log('');
   log('④ ★ 负对照：把控件层改回「贴窗口」，再用旧的 setPosition 搬 40 次');
   {
+    // ★ v4 批次 3-b：先摆回确定的起点再演示旧写法。
+    //   「setPosition 会把窗口撑大」这件事跟**绝对位置**有关（1.5 倍缩放下按 DPI 取整），
+    //   不固定起点的话，这条负对照会随「前面几次拖拽把桌宠留在哪儿」而时灵时不灵 ——
+    //   而负对照一旦不红，整个自检就不算数了。
+    const home = loadPosition();
+    movePet(home.x, home.y);
+    await sleep(220);
+
     const before = await readState();
     const [px, py] = win.getPosition();
 

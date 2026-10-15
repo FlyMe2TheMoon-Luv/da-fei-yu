@@ -235,6 +235,18 @@ section('9. estimateVelocity（把指针采样变成速度）');
 
   const fast = estimateVelocity([{ x: 0, t: 0 }, { x: 1000, t: 10 }], { maxAbs: 3000 });
   ok(fast === 3000, 'maxAbs 生效（速度被夹住）', `算出 ${fast}`);
+
+  // ★ 最后一笔样本已经很久了 = 手停了（鼠标不动就不发 mousemove）。
+  //   不挡住的话，「快拖一下 → 按住不动半秒 → 松手」会被当成还在飞，桌宠会窜出去。
+  const stale = [{ x: 0, t: 0 }, { x: 100, t: 10 }, { x: 200, t: 20 }];
+  ok(estimateVelocity(stale, { now: 500 }) === 0,
+    '★ 最后一笔样本过去 480ms 了（手早就停了）→ 速度 0',
+    `算出 ${estimateVelocity(stale, { now: 500 })}`);
+  okNeg(estimateVelocity(stale) !== 0,
+    '不传 now 时仍会按最后一笔窗口算出速度（说明上面那条不是恒 0 的假断言）',
+    `不传 now 算出 ${estimateVelocity(stale)}`);
+  ok(estimateVelocity(stale, { now: 60 }) !== 0, '样本还新鲜（过去 40ms）→ 正常给出速度',
+    `算出 ${estimateVelocity(stale, { now: 60 })}`);
 }
 
 // ---------- 10. isSettled ----------

@@ -46,6 +46,7 @@ const SUITES = {
   'test:nl-time': { kind: 'node', desc: '自然语言时间解析', covers: ['src/main/nl-time.js'] },
   'test:spring': { kind: 'node', desc: '手写弹簧（可打断 / 速度衔接 / 帧率无关）', covers: ['src/main/spring.js'] },
   'test:rubberband': { kind: 'node', desc: '橡皮筋边界（渐进阻力）', covers: ['src/main/rubberband.js'] },
+  'test:pet-drag': { kind: 'node', desc: '拖拽手感（越界阻力 / 松手落点 / 滑行状态机）', covers: ['src/main/pet-drag.js'] },
 
   // —— 聊天大脑 ——
   'test:brain-local': { kind: 'node', desc: '本地聊天规则', covers: ['src/main/brain/local.js'] },
@@ -75,10 +76,11 @@ const SUITES = {
   'test:week-e2e': { kind: 'e2e', desc: '周视图端到端', covers: ['src/main/week.js', 'src/main/selftest-week.js'] },
   'test:scheduler-e2e': { kind: 'e2e', desc: '调度端到端（要等 30 秒轮询）', covers: ['src/main/scheduler.js'] },
   'test:focus': { kind: 'e2e', desc: '窗口焦点自检（⚠ 不是专注模式）', covers: ['src/main/settings-window.js', 'src/main/focus-notice.js'] },
-  'test:sync': { kind: 'e2e', desc: '#ui 对齐哨兵（控件跟角色别错位）', covers: ['src/renderer/pet/', 'src/main/preload.js'] },
+  'test:sync': { kind: 'e2e', desc: '#ui 对齐哨兵（控件跟角色别错位）', covers: ['src/renderer/pet/', 'src/main/preload.js', 'src/main/pet-drag.js'] },
   'test:gaze': { kind: 'e2e', desc: '视线跟随', covers: ['src/renderer/pet/', 'src/main/preload.js'] },
+  'test:glide': { kind: 'e2e', desc: '松手惯性 + 橡皮筋（真跑主进程动画）', covers: ['src/main/pet-drag.js', 'src/renderer/pet/', 'src/main/preload.js'] },
   'test:exit': { kind: 'e2e', desc: '退出按钮（⚠ 会真的退出，正常）', covers: ['src/renderer/pet/', 'src/main/preload.js'] },
-  'test:drag': { kind: 'e2e', desc: '拖拽性能基准（只印测量值，不算通过/失败）', covers: ['src/renderer/pet/', 'src/main/place.js'] },
+  'test:drag': { kind: 'e2e', desc: '拖拽性能基准（只印测量值，不算通过/失败）', covers: ['src/renderer/pet/', 'src/main/place.js', 'src/main/pet-drag.js'] },
 };
 
 // ─────────────────────────────────────────────────────────────

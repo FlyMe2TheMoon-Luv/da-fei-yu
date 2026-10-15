@@ -18,7 +18,9 @@ contextBridge.exposeInMainWorld('petAPI', {
   // 传的是鼠标在屏幕上的坐标（渲染进程拿到的 screenX/screenY）
   dragStart: (p) => ipcRenderer.send('pet:drag-start', { x: p.x, y: p.y }),
   dragMove: (p) => ipcRenderer.send('pet:drag-move', { x: p.x, y: p.y }),
-  dragEnd: () => ipcRenderer.send('pet:drag-end'),
+  // v4 批次 3-b：把「系统有没有要求减少动态效果」一起报上去 ——
+  // 松手之后的惯性滑行由主进程跑，主进程读不到这个媒体查询，只能由渲染进程告诉它。
+  dragEnd: (p) => ipcRenderer.send('pet:drag-end', { reducedMotion: !!(p && p.reducedMotion) }),
 
   // ---- 动态鼠标穿透 ----
   // true = 让鼠标穿过去点到桌面；false = 桌宠接住鼠标
