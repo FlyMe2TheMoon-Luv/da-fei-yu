@@ -173,6 +173,70 @@
     }
     body {
       display: flex;
+      flex-direction: row;   /* v4 批次 3-c：左边侧边栏、右边内容 */
+      overflow: hidden;
+    }
+
+    /* ---------- 侧边栏（v4 批次 3-c）---------- */
+    /* 固定宽、自己不滚（只有内容区滚）。
+       背景和顶部 chrome 同一层材质，靠一条竖线跟内容分开 ——
+       「侧边栏是一层材质、内容在另一层」是苹果那边的做法。 */
+    .sidebar {
+      flex: none;
+      width: 168px;
+      display: flex;
+      flex-direction: column;
+      padding: var(--s-4) var(--s-2) var(--s-3);
+      background: var(--mat-chrome);
+      backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+      -webkit-backdrop-filter: blur(var(--mat-blur)) saturate(var(--mat-sat));
+      border-right: 1px solid var(--line);
+      box-shadow: inset 1px 0 0 var(--mat-edge);
+      overflow: hidden;
+    }
+    .brand {
+      margin: 0 var(--s-2) var(--s-4);
+      font-size: var(--fs-sub);
+      line-height: var(--lh-sub);
+      letter-spacing: var(--ls-sub);
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .nav {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    /* 导航项：整条可点、选中用**底色**而不是描边
+       （侧边栏里描边太吵，苹果那边也是实底高亮）。 */
+    .nav-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      padding: 8px 10px;
+      border: none;
+      border-radius: var(--r-sm);
+      background: transparent;
+      color: var(--text);
+      font-size: var(--fs-body);
+      box-shadow: none;
+    }
+    .nav-item:hover { background: var(--n-3); }    .nav-item[aria-current="page"] {
+      background: var(--a-050);
+      color: var(--a-600);
+      font-weight: 600;
+    }
+    /* ★ 深色下要换成更亮的蓝：`--a-600` 在深色底上**反而更暗**，
+       沿用浅色那套会让选中项比未选中还看不清（批次 2.6⁺ 踩过同一个坑）。 */
+    @media (prefers-color-scheme: dark) {
+      .nav-item[aria-current="page"] { color: var(--a-500); }
+    }
+
+    /* ---------- 内容区 ---------- */
+    .content {
+      flex: 1 1 auto;
+      min-width: 0;           /* 不加这条，里面的长文本会把内容区撑出去 */
+      display: flex;
       flex-direction: column;
       overflow: hidden;
     }
@@ -615,7 +679,8 @@
     /* ---------- 专注页（v3） ---------- */
     /* 进专注页时，把「日程那一套」整体藏起来（header / 工具栏 / 表单 / 列表 / 周视图）。
        用一个 body 上的类来切，比逐个元素 toggle 更不容易漏。 */
-    body.focus-mode header,
+    /* 专注页：内容区里「日程那一套」整体让位。
+       ★ 侧边栏**不藏** —— 藏了就出不去了（批次 3-c 之前的「← 返回日程」按钮就是干这个的）。 */
     body.focus-mode .toolbar,
     body.focus-mode #form,
     body.focus-mode .list-wrap,
@@ -631,27 +696,6 @@
       gap: var(--s-3);
     }
     #focus-page.hidden { display: none; }
-
-    .focus-top {
-      display: flex;
-      align-items: center;
-      gap: var(--s-2);
-      flex: none;
-    }
-    .focus-top h1 {
-      font-size: var(--fs-title);
-      line-height: var(--lh-title);
-      letter-spacing: var(--ls-title);
-      margin: 0;
-    }
-    /* 返回按钮是「次要动线」，但它是这一页唯一的出口 —— 所以要有实边，
-       不能做成纯文字（那会让人找不到怎么回去）。 */
-    #btn-focus-back {
-      flex: none;
-      padding: 5px 10px;
-      font-size: var(--fs-sub);
-      line-height: var(--lh-sub);
-    }
 
     /* 安全 DNS 提醒：三态三种颜色，不用红色吓人，但要看得见 */
     #focus-doh {
@@ -1384,17 +1428,28 @@
   </style>
 </head>
 <body>
-  <header>
-    <h1>日程管理</h1>
-    <p class="sub">到点时，桌宠会冒泡提醒你。错过 5 分钟以内的，开机后还会补上。</p>
-  </header>
+  <!-- v4 批次 3-c：左边侧边栏分页、右边内容区。
+       以前「周视图 / 专注」是工具栏上的按钮，而且「周视图」按钮点完还会**改自己的字**变成
+       「列表」—— 用户根本看不出现在在哪一页、能去哪一页。侧边栏把这件事说清楚了。 -->
+  <aside class="sidebar">
+    <p class="brand">日程管理</p>
+    <nav class="nav" aria-label="页面">
+      <button id="btn-list" class="nav-item" aria-current="page">日程</button>
+      <button id="btn-week" class="nav-item" title="按周一到周日看看这一周的安排">周视图</button>
+      <button id="btn-focus" class="nav-item" title="开始一段专注：挡住分心的网站和软件">专注</button>
+    </nav>
+  </aside>
 
-  <div class="toolbar">
-    <button id="btn-add" class="primary">＋ 添加日程</button>
-    <button id="btn-preview" class="ghost" title="立刻弹一次提醒，看看效果">预览提醒效果</button>
-    <button id="btn-week" class="ghost" title="按周一到周日看看这一周的安排">周视图</button>
-    <button id="btn-focus" class="ghost" title="开始一段专注：挡住分心的网站和软件">专注</button>
-  </div>
+  <main class="content">
+    <header>
+      <h1 id="page-title">日程</h1>
+      <p class="sub" id="page-sub">到点时，桌宠会冒泡提醒你。错过 5 分钟以内的，开机后还会补上。</p>
+    </header>
+
+    <div class="toolbar">
+      <button id="btn-add" class="primary">＋ 添加日程</button>
+      <button id="btn-preview" class="ghost" title="立刻弹一次提醒，看看效果">预览提醒效果</button>
+    </div>
 
   <!-- 添加 / 编辑共用同一块表单，靠 editingId 区分 -->
   <div id="form" class="hidden">
@@ -1470,11 +1525,7 @@
   <!-- 专注页（v3）：不新建窗口，就在这个窗口里切一页。
        三块：要挡住的东西 / 专注多久 / 开始 + 倒计时。 -->
   <div id="focus-page" class="hidden">
-    <div class="focus-top">
-      <button id="btn-focus-back" class="ghost">← 返回日程</button>
-      <h1>专注</h1>
-    </div>
-
+    <!-- v4 批次 3-c：标题和「返回日程」都交给侧边栏了，这里不再重复一份 -->
     <!-- 安全 DNS 提醒（Task 7）：
          浏览器开着「安全 DNS」的话，域名解析不走系统 —— 我们改 hosts 就白改了。
          这是唯一一个「我们全对、功能全废」的坑，所以放在最上面显眼处。 -->
@@ -1561,6 +1612,7 @@
       </div>
     </section>
   </div>
+  </main>
 
   <!-- 已安装软件选择面板（v4 批次 1；批次 2.5 改「先勾后存」）。
        盖在专注页上的一层浮层：搜索框 + 图标网格。

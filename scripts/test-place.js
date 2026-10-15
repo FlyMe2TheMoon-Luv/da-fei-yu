@@ -22,9 +22,10 @@ function ok(cond, label) {
 }
 function section(t) { console.log(`\n${t}`); }
 
-// 和 settings-window.js 保持一致（480×640 是不含 useContentSize 的「外框」尺寸，
-// 也就是 Electron 里 getBounds() 会返回的那个尺寸 —— 摆位置要用它，不是网页可视区）
-const WIN = { w: 480, h: 640 };
+// 和 settings-window.js 保持一致（这是不含 useContentSize 的「外框」尺寸，
+// 也就是 Electron 里 getBounds() 会返回的那个尺寸 —— 摆位置要用它，不是网页可视区）。
+// ★ v4 批次 3-c：设置窗口改成侧边栏布局后，宽度 = 内容区 480 + 侧边栏 168。
+const WIN = { w: 648, h: 640 };
 const GAP = 10;
 const EDGE = 8;
 const PET = { width: 400, height: 380 };

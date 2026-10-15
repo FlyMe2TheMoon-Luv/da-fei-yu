@@ -173,15 +173,26 @@ function plan(files, opts = {}) {
 
 // ─────────────────────────────────────────────────────────────
 // 五、跑 + 统一汇总
-//    ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），
-//      所以这里用正则一起收，而不是 grep 一种。
+//    ⚠ 各套件收尾格式**不统一**，实测有三种：
+//      · 「结果：N 通过 / M 失败」（多数套件）
+//      · 「结束：N 通过 / M 失败」（端到端那几套）
+//      · 「PICKER RESULT: N passed / M failed」（picker-ui / focus-stop-ui，英文）
+//      所以三种都要认 —— 少认一种，那几套就会被当成「没读到收尾行」，
+//      数字对不上还是小事，**汇总里那些断言根本没被算进去**才是问题。
 //    ⚠ 用异步 spawn 直接起进程，**不经过 npm**：
 //      · npm 每套要额外起一次 node，20 套就白等十几秒；
 //      · `shell:true` 在 Windows 上要走 cmd.exe，沙箱里直接被拦（EBUSY）。
 //      命令从 package.json 现读，`node xxx` 一律换成当前 node 解释器。
 // ─────────────────────────────────────────────────────────────
-const SUMMARY_RE = /(?:结果|结束)：\s*(\d+)\s*通过\s*\/\s*(\d+)\s*失败/;
 const NO_SUMMARY = new Set(['test:drag']); // 性能基准，只印测量值
+
+function parseSummary(out) {
+  let m = out.match(/(?:结果|结束)：\s*(\d+)\s*通过\s*\/\s*(\d+)\s*失败/);
+  if (m) return { pass: +m[1], fail: +m[2] };
+  m = out.match(/(\d+)\s+passed\s*\/\s*(\d+)\s+failed/);
+  if (m) return { pass: +m[1], fail: +m[2] };
+  return { pass: null, fail: null };
+}
 
 const SCRIPTS = require('../package.json').scripts;
 
@@ -195,9 +206,7 @@ function commandOf(name) {
 
 // 判定「这一套算不算过」——单独抽成纯函数，好让 --selfcheck 拿假输出验它
 function judge({ name, code, out, timedOut, spawnErr }) {
-  let pass = null, fail = null;
-  const m = out.match(SUMMARY_RE);
-  if (m) { pass = +m[1]; fail = +m[2]; }
+  const { pass, fail } = parseSummary(out);
   const noSummary = NO_SUMMARY.has(name);
   // 退出码和收尾行**两个都要看**：任一不对就是红
   const ok = !timedOut && !spawnErr && code === 0 && (fail === null || fail === 0);
@@ -262,6 +271,13 @@ async function selfcheck() {
   // 「结束：」格式（各套件收尾格式不统一，两种都要认）
   v = J({ out: '===== 结束：7 通过 / 0 失败 =====' });
   check(v.ok && v.pass === 7, '「结束：」全绿 → ok，数也对', false, `pass=${v.pass}`);
+  // ★ 英文格式（picker-ui / focus-stop-ui 用的是这个）
+  v = J({ out: 'PICKER RESULT: 49 passed / 0 failed' });
+  check(v.ok && v.pass === 49 && v.fail === 0, '「N passed / M failed」也认（不然那两套的断言根本不算进来）',
+    `pass=${v.pass} fail=${v.fail}`);
+  // ★ 负对照：英文格式里有失败也必须判红
+  v = J({ out: 'FOCUS-STOP RESULT: 60 passed / 5 failed' });
+  check(!v.ok && v.fail === 5, '英文格式里 5 条失败 → 判红（负对照：它红才算对）', true, `ok=${v.ok} fail=${v.fail}`);
   // ★ 负对照：有失败必须判红
   v = J({ out: '===== 结果：5 通过 / 2 失败 =====' });
   check(!v.ok && v.fail === 2, '有 2 条失败 → 判红（负对照：它红才算对）', true, `ok=${v.ok} fail=${v.fail}`);

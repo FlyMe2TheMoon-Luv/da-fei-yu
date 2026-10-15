@@ -34,12 +34,15 @@ const el = {
   btnAdd: document.getElementById('btn-add'),
   btnPreview: document.getElementById('btn-preview'),
   btnWeek: document.getElementById('btn-week'),
+  // v4 批次 3-c：侧边栏导航 + 内容区标题
+  btnList: document.getElementById('btn-list'),
+  pageTitle: document.getElementById('page-title'),
+  pageSub: document.getElementById('page-sub'),
   btnCancel: document.getElementById('btn-cancel'),
   btnSave: document.getElementById('btn-save'),
   // 专注页（v3）
   btnFocus: document.getElementById('btn-focus'),
   focusPage: document.getElementById('focus-page'),
-  btnFocusBack: document.getElementById('btn-focus-back'),
   fDomainInput: document.getElementById('f-domain-input'),
   btnAddDomain: document.getElementById('btn-add-domain'),
   focusDomains: document.getElementById('focus-domains'),
@@ -350,17 +353,41 @@ async function loadWeek() {
   renderWeek(weekData);
 }
 
-// 只负责「哪块显示、按钮上写什么」——窗口尺寸是主进程的事
+// 只负责「哪块显示、导航高亮谁、标题写什么」——窗口尺寸是主进程的事
+//
+// v4 批次 3-c：原来是「点周视图按钮 → 按钮自己的字变成『列表』」，
+// 用户看不出现在在哪一页。改成侧边栏之后，**高亮**负责说「你在哪」、
+// 内容区标题负责说「这是什么页」，按钮的字不再变。
+const PAGE_TEXT = {
+  list: { title: '日程', sub: '到点时，桌宠会冒泡提醒你。错过 5 分钟以内的，开机后还会补上。' },
+  week: { title: '周视图', sub: '周一到周日，一眼看见这一周怎么排。点方块可以改。' },
+  // ★ 这句话要跟专注页那张卡里的说明**错开**：卡里讲的是「机制」（网站打不开、软件被关掉），
+  //   这里讲的是「这一页要你做什么」。两句话一样的话，读起来像复制粘贴。
+  focus: { title: '专注', sub: '挑好要挡住的网站和软件，再选一段时长。' },
+};
+
 function applyMode() {
   const isWeek = mode === 'week';
   const isFocus = mode === 'focus';
   el.week.classList.toggle('hidden', !isWeek);
   el.listWrap.classList.toggle('hidden', isWeek || isFocus);
   el.focusPage.classList.toggle('hidden', !isFocus);
-  // 专注页把「日程那一套」（header / 工具栏 / 表单 / 列表 / 周视图）整体藏起来，
+  // 专注页把「日程那一套」（工具栏 / 表单 / 列表 / 周视图）整体藏起来，
   // 用一个 body 上的类来切，比逐个元素 toggle 更不容易漏。
+  // ★ 侧边栏不在里面 —— 藏了就出不去了。
   document.body.classList.toggle('focus-mode', isFocus);
-  el.btnWeek.textContent = isWeek ? '列表' : '周视图';
+
+  // 导航高亮：三个都过一遍（不是「找第一个就 return」——
+  // 那样别人加一个同选择器的项就会悄悄失效，见 CLAUDE.md 第 63 条）
+  for (const [name, btn] of [['list', el.btnList], ['week', el.btnWeek], ['focus', el.btnFocus]]) {
+    if (!btn) continue;
+    if (name === mode) btn.setAttribute('aria-current', 'page');
+    else btn.removeAttribute('aria-current');
+  }
+
+  const t = PAGE_TEXT[mode] || PAGE_TEXT.list;
+  el.pageTitle.textContent = t.title;
+  el.pageSub.textContent = t.sub;
 }
 
 async function setMode(next) {
@@ -376,9 +403,8 @@ async function setMode(next) {
   }
 }
 
-async function toggleMode() {
-  await setMode(mode === 'week' ? 'list' : 'week');
-}
+// v4 批次 3-c：`toggleMode` 删掉了 —— 侧边栏里「日程」和「周视图」各是一个独立入口，
+// 不再需要「同一个按钮点一下切过去、再点一下切回来」（那种做法用户看不出自己在哪）。
 
 // 点周视图上的一个方块 → 开表单改这一条。
 // ⚠ 故意**不**用「点的时候闭包捕获的那份数据」—— 周视图可能是几分钟前渲染的，
@@ -1279,11 +1305,13 @@ el.btnCancel.addEventListener('click', closeForm);
 el.btnSave.addEventListener('click', onSave);
 el.repeat.addEventListener('change', syncRepeatRows);
 el.kind.addEventListener('change', syncKindRows);
-el.btnWeek.addEventListener('click', toggleMode);
+el.btnWeek.addEventListener('click', () => setMode('week'));
+el.btnList.addEventListener('click', () => setMode('list'));
 
 // ---- 专注页的事件 ----
 el.btnFocus.addEventListener('click', () => setMode('focus'));
-el.btnFocusBack.addEventListener('click', () => setMode('list'));
+// v4 批次 3-c：原来这里绑的是「← 返回日程」（#btn-focus-back）。
+// 侧边栏已经承担了「从专注页回日程」这件事，那个按钮连同它的处理一起删了。
 el.btnAddDomain.addEventListener('click', () => addFocusItem('domain'));
 el.btnAddExe.addEventListener('click', () => addFocusItem('exe'));
 el.btnCustomOk.addEventListener('click', applyCustomMinutes);

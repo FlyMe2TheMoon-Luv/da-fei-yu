@@ -34,10 +34,20 @@ const PRELOAD = path.join(__dirname, 'preload-settings.js');
 // 这个窗口有三种模式，每种一个尺寸。
 // 周视图要放下七列 + 时间刻度，所以宽得多；
 // 专注页（v3）内容不多，跟列表一样宽就行，省得窗口忽大忽小。
+//
+// ★ v4 批次 3-c：改成侧边栏布局之后，宽度要**加上侧边栏那一份** ——
+//   否则侧边栏会从内容区里抠掉 168px，列表和表单都会挤扁。
+//   SIDEBAR_W 必须和 index.html 里 `.sidebar { width: 168px }` 保持一致。
+const SIDEBAR_W = 168;
+const CONTENT_W = {
+  list: 480,
+  week: 1000,
+  focus: 480,
+};
 const SIZES = {
-  list: { w: 480, h: 640 },
-  week: { w: 1000, h: 680 },
-  focus: { w: 480, h: 640 },
+  list: { w: CONTENT_W.list + SIDEBAR_W, h: 640 },
+  week: { w: CONTENT_W.week + SIDEBAR_W, h: 680 },
+  focus: { w: CONTENT_W.focus + SIDEBAR_W, h: 640 },
 };
 // WIN_W / WIN_H 是「列表模式」的别名 —— 现有自检和 placeNear 复算都在用，别删。
 const WIN_W = SIZES.list.w;

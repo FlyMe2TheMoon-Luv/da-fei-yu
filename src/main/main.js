@@ -1974,6 +1974,57 @@ async function runSettingsSelfTest() {
       ` → ${petRect0.x},${petRect0.y} → ${petRect.x},${petRect.y}`);
   }
 
+  // ===== ①c 侧边栏（v4 批次 3-c）=====
+  // 以前「周视图 / 专注」是工具栏上的按钮，而且「周视图」按钮点完还会改自己的字变成
+  // 「列表」—— 用户看不出现在在哪一页。侧边栏要同时做到三件事：
+  //   ① 三个页面各有独立入口（不再共用一个会变字的按钮）
+  //   ② **高亮**说清「你在哪一页」
+  //   ③ 专注页上侧边栏**仍然在**（不然就没有出口了 —— 原来靠「← 返回日程」按钮）
+  log('①c 侧边栏');
+  {
+    const nav = await sw.webContents.executeJavaScript(`(() => {
+      const sb = document.querySelector('.sidebar');
+      const ids = ['btn-list', 'btn-week', 'btn-focus'];
+      const items = ids.map((id) => {
+        const el = document.getElementById(id);
+        return el ? { id, inSidebar: !!sb && sb.contains(el), current: el.getAttribute('aria-current') } : { id, missing: true };
+      });
+      const content = document.querySelector('.content');
+      return {
+        hasSidebar: !!sb,
+        sidebarW: sb ? Math.round(sb.getBoundingClientRect().width) : null,
+        contentW: content ? Math.round(content.getBoundingClientRect().width) : null,
+        innerW: window.innerWidth,
+        items,
+        // ★ 负对照：这两个不该再留在工具栏里（它们已经搬进侧边栏了）
+        weekInToolbar: !!document.querySelector('.toolbar #btn-week'),
+        focusInToolbar: !!document.querySelector('.toolbar #btn-focus'),
+        title: document.getElementById('page-title').textContent,
+      };
+    })()`);
+
+    ok(nav.hasSidebar === true, '★ 侧边栏存在');
+    ok(nav.items.every((x) => !x.missing && x.inSidebar),
+      '★ 三个导航项（日程 / 周视图 / 专注）都在侧边栏里',
+      ` → ${nav.items.map((x) => `${x.id}:${x.missing ? '缺' : (x.inSidebar ? '在' : '不在侧边栏')}`).join(' ')}`);
+    ok(nav.weekInToolbar === false && nav.focusInToolbar === false,
+      '★ 负对照：周视图 / 专注 已经**不在**工具栏里了（搬进侧边栏，不是两边各留一份）',
+      ` → toolbar 里有周视图=${nav.weekInToolbar} 有专注=${nav.focusInToolbar}`);
+
+    // 高亮：只有当前页那一项带 aria-current，**全部收齐再判**（不是找第一个就 return）
+    const currentIds = nav.items.filter((x) => x.current === 'page').map((x) => x.id);
+    ok(currentIds.length === 1 && currentIds[0] === 'btn-list',
+      '★ 刚打开时高亮正好在「日程」一项上（且只有一项高亮）',
+      ` → 高亮的项：${currentIds.join(',') || '(无)'}`);
+
+    // 侧边栏是真的占了一列（而不是叠在内容上）：内容区宽度 ≈ 窗口宽 - 侧边栏宽
+    const expectedContent = nav.innerW - nav.sidebarW;
+    ok(Math.abs(nav.contentW - expectedContent) <= 2,
+      '★ 侧边栏占掉了一整列，内容区是剩下的宽度（不是浮在上面盖住内容）',
+      ` → 窗口 ${nav.innerW} - 侧边栏 ${nav.sidebarW} = ${expectedContent}，内容区实际 ${nav.contentW}`);
+    ok(nav.title === '日程', '内容区标题跟着当前页走（现在是「日程」）', ` → “${nav.title}」`);
+  }
+
   // 桌宠本该是 screen-saver 层级，会压住设置窗口一块 ——
   // 所以设置窗口开着的时候要把它临时降下来（关掉再升回去）。
   ok(win.isAlwaysOnTop() === false,
@@ -2255,23 +2306,35 @@ async function runSettingsSelfTest() {
     ` → ${weekOpen.spanH}px vs ${weekOpen.pointH}px`);
 
   // ★ 负对照：切回列表 —— 周视图要藏起来、列表要回来、窗口尺寸也要缩回去
-  log('⑤d′ ★ 负对照：再点一下切回列表');
+  //   v4 批次 3-c：切回去走**侧边栏的「日程」**。
+  //   原来是「再点一下同一个按钮」（那个按钮点完还会把字改成「列表」），
+  //   侧边栏里两个页面各有独立入口，所以负对照改成点另一个入口 ——
+  //   这同样能证明「切页面是真的切了」，而且比原来更贴近用户的真实动作。
+  log('⑤d′ ★ 负对照：点侧边栏「日程」切回列表');
   const weekBack = await sw.webContents.executeJavaScript(`(async () => {
-    const btn = document.getElementById('btn-week');
+    const btn = document.getElementById('btn-list');
     if (!btn) return { missingBtn: true };
     btn.click();
     await new Promise((r) => setTimeout(r, 900));
     return {
       weekHidden: document.getElementById('week').classList.contains('hidden'),
       listShown: !document.querySelector('.list-wrap').classList.contains('hidden'),
-      btnText: btn.textContent.trim(),
+      weekNav: document.getElementById('btn-week').getAttribute('aria-current'),
+      listNav: btn.getAttribute('aria-current'),
+      weekLabel: document.getElementById('btn-week').textContent.trim(),
     };
   })()`);
   if (weekBack.missingBtn) {
-    ok(false, '★ 负对照没法做（没有「周视图」按钮）');
+    ok(false, '★ 负对照没法做（侧边栏没有「日程」入口）');
   } else {
     ok(weekBack.weekHidden === true && weekBack.listShown === true,
       '★ 负对照：切回列表后周视图藏起来、列表回来了');
+    ok(weekBack.listNav === 'page' && weekBack.weekNav === null,
+      '★ 高亮跟着切回「日程」（周视图不再高亮）',
+      ` → 日程=${weekBack.listNav} 周视图=${weekBack.weekNav}`);
+    // 侧边栏的标签**不再变字**（旧做法是按钮自己变成「列表」，看不出在哪一页）
+    ok(weekBack.weekLabel === '周视图', '★ 侧边栏的「周视图」标签保持原样（不再变字）',
+      ` → “${weekBack.weekLabel}”`);
   }
   {
     const b = sw.getBounds();
@@ -2320,7 +2383,7 @@ async function runSettingsSelfTest() {
       '★ 类型和结束时间也都带进来了', ` → kind=${clickBlk.kind} endTime=${clickBlk.endTime}`);
     ok(clickBlk.weekHidden === true && clickBlk.listShown === true,
       '★ 同时切回了列表（不然表单会被周视图的网格盖住）');
-    ok(clickBlk.btnText === '周视图', '切回列表后按钮文案也跟着变回「周视图」', ` → “${clickBlk.btnText}”`);
+    ok(clickBlk.btnText === '周视图', '★ 侧边栏「周视图」标签保持原样（不再变字）', ` → “${clickBlk.btnText}”`);
   }
 
   // ★ 负对照：在表单里改完保存，主进程那边必须**真的变了** ——
@@ -2537,12 +2600,41 @@ async function runSettingsSelfTest() {
   })()`);
 
   if (focusOpen.missingBtn) {
-    ok(false, '★ 工具栏上没有「专注」按钮（#btn-focus）—— 专注页根本打不开');
+    ok(false, '★ 侧边栏上没有「专注」入口（#btn-focus）—— 专注页根本打不开');
   } else {
     ok(focusOpen.pageShown === true && focusOpen.listHidden === true,
       '★ 点「专注」后专注页出现了、日程列表藏起来了');
     ok(focusOpen.hasStart === true && focusOpen.hasStop === true,
       '专注页上有「开始专注」和「结束专注」两个按钮');
+  }
+
+  // ★ v4 批次 3-c：专注页上侧边栏必须**还在**。
+  //   这是这一批最容易出人命的地方：以前专注页的出口是页内那个「← 返回日程」按钮，
+  //   现在那个按钮删了、出口只剩侧边栏 —— 万一侧边栏被 body.focus-mode 一起藏了，
+  //   用户就**出不来了**（而且窗口也没了关闭按钮的替代路径）。
+  {
+    const nav = await sw.webContents.executeJavaScript(`(() => {
+      const sb = document.querySelector('.sidebar');
+      const list = document.getElementById('btn-list');
+      const vis = (el) => {
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      return {
+        sidebarVisible: vis(sb),
+        listVisible: vis(list),
+        listCurrent: list ? list.getAttribute('aria-current') : null,
+        focusCurrent: document.getElementById('btn-focus').getAttribute('aria-current'),
+        title: document.getElementById('page-title').textContent,
+      };
+    })()`);
+    ok(nav.sidebarVisible === true, '★ 专注页上侧边栏仍然可见（不然就没有出口了）');
+    ok(nav.listVisible === true, '★ 侧边栏上的「日程」仍然点得到（这就是专注页的出口）');
+    ok(nav.focusCurrent === 'page' && nav.listCurrent === null,
+      '★ 高亮切到了「专注」，「日程」不再高亮',
+      ` → 专注=${nav.focusCurrent} 日程=${nav.listCurrent}`);
+    ok(nav.title === '专注', '内容区标题跟着变成「专注」', ` → “${nav.title}」`);
   }
 
   // 顺带验「专注页真的排开了版」——不是掉到左上角、也不是高度为 0 的隐形页。
@@ -3085,15 +3177,20 @@ async function runSettingsSelfTest() {
   log('⑧b⁸ 收尾：结束专注、清空名单、回到日程列表');
   focus.stop('selftest-cleanup');
   focus.setBlacklist({ domains: [], exes: [] });
+  // v4 批次 3-c：回列表改走**侧边栏**（原来那一页上的「← 返回日程」已经删了）
   const backToList = await sw.webContents.executeJavaScript(`(async () => {
-    document.getElementById('btn-focus-back').click();
+    document.getElementById('btn-list').click();
     await new Promise((r) => setTimeout(r, 600));
     return {
       focusHidden: document.getElementById('focus-page').classList.contains('hidden'),
       listShown: !document.querySelector('.list-wrap').classList.contains('hidden'),
+      listNavCurrent: document.getElementById('btn-list').getAttribute('aria-current'),
     };
   })()`);
-  ok(backToList.focusHidden === true && backToList.listShown === true, '点「返回日程」回到了列表');
+  ok(backToList.focusHidden === true && backToList.listShown === true,
+    '点侧边栏「日程」回到了列表');
+  ok(backToList.listNavCurrent === 'page', '★ 侧边栏高亮也跟着回到「日程」',
+    ` → aria-current=${backToList.listNavCurrent}`);
   ok(focus.state().session === null && focus.state().domains.length === 0,
     '★ 收尾后没有残留的专注会话 / 黑名单');
 
