@@ -16,6 +16,10 @@
   **下一步 Task 10：文档 + 全量回归 + 主人真机验收（10 条清单）**。
   ⚠ Task 6–9 里「动系统」的部分，**代码和自检都完成了，但真机验收还没做**
   （UAC 弹窗、网站真打不开、记事本真被关 —— 这三件事沙箱里验不了，只能主人点）。
+  **2026-10-15：真机验收第 2 步卡在「读不到 hosts」**（详见 `memory/2026-10-15.md`）。
+  实测：hosts 文件本身没问题（PowerShell / node / Electron 都能读，ACL 正常），
+  机器上装了**火绒安全软件**；结论是「代码路径没问题，运行那一刻被外部挡了」。
+  已加诊断（把系统错误码带出来）+ 一键体检 `npm run check:hosts`，等主人回报错误码。
 - **阶段 3 专注模式的关键约定**（别改错）：
   - 拦截分两段：**改 hosts 挡网站** + **轮询杀进程挡软件**。整段专注**只弹一次 UAC** ——
     起一个**常驻提权助手**（`src/main/focus-helper.ps1`，**纯 ASCII**），从写 hosts 活到结束。
@@ -50,6 +54,16 @@
     ★「unknown」还得再分两种说清：装了浏览器但配置里**没这一项**（= 你没改过）vs
     **有这一项但值不认识**（= 版本太新）。真机上 Chrome/Edge 都装了却没这一项，
     第一版提示语说「没检测到浏览器」——**是句错话，已修**。
+  - **读 hosts 失败必须把「为什么」带出来**：`readHostsText` 原来是 `catch { return null }`，
+    把原因吞了，界面只能说「可能是杀毒软件挡住了，或者权限不够」—— 那是**猜**，主人没法照做。
+    现在 `intercept.readError()` 记 code / message / path，`explainReadError()` 翻成人话
+    （ENOENT / EACCES|EPERM / EBUSY / 其它 → **四句必须不同**），并往控制台打一行
+    `[focus] 读 hosts 失败：path=… code=… msg=…`。
+    ★ 读成功必须把旧原因清掉，否则会拿上次的错解释这次（自检钉了这条）。
+    ★ 教训：**凡是 `catch` 完只返回兜底值的地方，都在丢诊断信息**。动系统的操作尤其要留原因 ——
+    出问题时主人手里得有一句**能照做**的话，而不是一句猜测。
+  - **一键体检 `npm run check:hosts`**（`scripts/check-hosts.js`，只读 / 不写 / 不提权）：
+    能读 → 报字符数 + 有没有残留标记块；读不到 → 报错误码 + 人话 + 「怎么办」。
 - **v2 四条已拍板**：聊天**本地规则 + 云端 AI 两套都做**（没网退回本地）/ 周视图上**点方块弹表单**改 /
   聊天框是**贴着桌宠的小气泡条** / 周视图**不翻页**（固定周一到周日）。
 - **v2 新架构约定**（别改错）：布局数学放主进程 `src/main/week.js`（纯函数、Node 可单测），
@@ -83,10 +97,11 @@
 - 目录约定：`src/main`（主进程，碰系统）、`src/renderer`（界面，不碰系统）、`src/assets`（静态图片）、`scripts/`（开发工具）。
 - 开发工具：`npm run shot`（截图验收）/ `check-assets`（验图片真透明）/ `make-tray-icon` / `sync-vendor` /
   `make-launcher`（生成桌面双击快捷方式 + 图标）/
+  **`check:hosts`（hosts 体检：能不能读 / 错误码 / 有没有残留标记块；只读不写不提权）** /
   **纯 Node 自检**：`test:schedules`（63）/ `test:scheduler`（39）/ `test:reminder`（14）/ `test:place`（37）/
   `test:quit`（8）/ `test:week`（53）/ `test:nl-time`（23）/ `test:brain-local`（19）/ `test:brain-cloud`（18）/
   `test:brain-router`（19）/ `test:focus-blacklist`（76）/ `test:focus-timer`（34）/ `test:focus-hosts`（99）/
-  `test:focus-elevate`（81）/ `test:focus-helper`（51，**真跑 .ps1，不提权**）/ `test:focus-intercept`（47）/
+  `test:focus-elevate`（81）/ `test:focus-helper`（51，**真跑 .ps1，不提权**）/ `test:focus-intercept`（56）/
   **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（58）/ `test:reminder-e2e`（19）/
   `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
   `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。

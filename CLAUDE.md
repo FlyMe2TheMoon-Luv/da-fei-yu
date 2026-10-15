@@ -292,6 +292,14 @@ desktop-pet/
 45. **四个窗口焦点策略各不相同** —— 桌宠 `false` / 提醒气泡 `false` / **专注提示窗口 `true`** /
     设置窗口 + 聊天条 `true`。提示窗口要主人**看见并点按钮**，所以 `show()`+`focus()`，别照抄气泡的
     `showInactive()`。自检钉了负对照：提示窗口 `true` 且气泡 `false`，两个值必须不一样。
+46. **`catch` 完只返回兜底值 = 把诊断信息丢了** —— 真机踩到：读 hosts 失败时
+    `readHostsText` 直接 `catch { return null }`，界面只能说「可能是杀毒软件，也可能权限不够」，
+    主人拿着这句话既没法确认、也不知道下一步点哪里。凡是**动系统**的操作，失败时都必须留下
+    系统给的原因（错误码 + 原话）并翻成一句**能照做**的人话。
+    ★ 排查这类问题的顺序：① 先证明文件本身能不能读（换 PowerShell / node / 用程序自己的模块各试一遍）
+    ② 排除环境变量残留（`PET_*`）③ 再看杀软（本机是**火绒**，HIPS 会拦小程序的敏感动作）
+    ④ 都不行就把错误码带出来让主人复现。
+    ★ 相关工具：`npm run check:hosts`（只读体检，报能不能读 / 错误码 / 有没有残留标记块）。
 
 ---
 
@@ -318,7 +326,8 @@ npm run test:focus-timer     # 专注·计时状态机 34
 npm run test:focus-hosts     # 专注·hosts 文本 + DoH 99
 npm run test:focus-elevate   # 专注·提权壳 81
 npm run test:focus-helper    # 专注·真跑 focus-helper.ps1（不提权）51
-npm run test:focus-intercept # 专注·系统薄壳 47
+npm run test:focus-intercept # 专注·系统薄壳 56
+npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
 npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页）113

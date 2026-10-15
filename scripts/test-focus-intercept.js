@@ -132,6 +132,34 @@ section('2. ★ 负对照：读不到 hosts 时必须说「不知道」，绝不
   okNeg(ic.readHostsText(empty) === '', '★ 文件真的存在且为空 → 这时才返回空串（两者必须能区分）');
 }
 
+// ---------- 2b. ★ 读失败要留下「为什么」 ----------
+section('2b. ★ 读不到时要留下原因（错误码），读成功时必须清掉旧原因');
+{
+  const missing = tmpFile();          // 造了目录但没造文件
+  okNeg(ic.readHostsText(missing) === null, '★ 读不存在的文件 → null');
+
+  const info = ic.readError();
+  okNeg(!!info && info.code === 'ENOENT', `★ 失败原因记下来了：ENOENT（实际 ${info && info.code}）`);
+  okNeg(!!info && String(info.path).includes('focus-intercept-'), '★ 原因里带着路径，方便定位是哪个文件');
+
+  // ★ 关键负对照：读成功之后，上一次的失败原因必须消失
+  const good = tmpFile();
+  fs.writeFileSync(good, Buffer.from('127.0.0.1 localhost\n', 'latin1'));
+  ok(ic.readHostsText(good) === '127.0.0.1 localhost\n', '再读一个正常文件 → 成功');
+  okNeg(ic.readError() === null, '★ 读成功后旧原因被清掉（否则会拿上次的错去解释这次）');
+
+  // ★ 翻译成人话：不同错误码必须给出不同的话
+  const eAccess = ic.explainReadError({ code: 'EACCES' });
+  const eNoent = ic.explainReadError({ code: 'ENOENT' });
+  const eBusy = ic.explainReadError({ code: 'EBUSY' });
+  const eOther = ic.explainReadError({ code: '' });
+  okNeg(new Set([eAccess, eNoent, eBusy, eOther]).size === 4,
+    '★ 四种错误码 → 四句不同的话（不许都吐同一句）');
+  okNeg(/信任区/.test(eAccess), '★ EACCES 的话里要明确告诉主人「加入信任区」这一步');
+  ok(ic.explainReadError({ code: 'EPERM' }) === eAccess, 'EPERM 和 EACCES 归为同一类（都是「被拒绝」）');
+  okNeg(ic.explainReadError(null) === eOther, '★ 没给原因时归到「没给出具体原因」，不许冒充「被拒绝」');
+}
+
 // ---------- 3. 算新内容 ----------
 section('3. computeBlock：新全文 + 还原全文');
 {

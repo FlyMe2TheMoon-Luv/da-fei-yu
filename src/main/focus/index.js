@@ -208,10 +208,19 @@ async function start({ minutes } = {}) {
   //    硬着头皮写下去，可能拿一份不完整的内容覆盖掉主人的 DNS 配置。
   const original = intercept.readHostsText(options.hostsPath);
   if (original === null) {
+    // ★ 把「为什么读不到」带出去。
+    //   以前这里只回一句「可能是杀毒软件，也可能权限不够」—— 猜的，主人没法照做。
+    //   现在带上系统错误码 + 一句人话，界面直接显示出来。
+    const info = intercept.readError();
+    const code = (info && info.code) || '?';
+    const why = intercept.explainReadError(info);
+    console.error(
+      `[focus] 读 hosts 失败：path=${options.hostsPath} code=${code} msg=${(info && info.message) || ''}`
+    );
     return {
       ok: false,
       doh: dohInfo,
-      error: '读不到 hosts 文件，没法开始专注。可能是被杀毒软件挡住了，或者权限不够。',
+      error: `读不到 hosts 文件，没法开始专注。${why}（错误码 ${code}）`,
     };
   }
 

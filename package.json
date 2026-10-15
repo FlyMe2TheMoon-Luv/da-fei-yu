@@ -39,7 +39,8 @@
     "make-launcher": "node scripts/make-launcher.js",
     "shot": "electron scripts/shot.js",
     "build": "electron-builder",
-    "test:focus-intercept": "node scripts/test-focus-intercept.js"
+    "test:focus-intercept": "node scripts/test-focus-intercept.js",
+    "check:hosts": "node scripts/check-hosts.js"
   },
   "author": "",
   "license": "MIT",

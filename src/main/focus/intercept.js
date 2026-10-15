@@ -28,12 +28,51 @@ const elevator = require('./elevate');
 // ★ 读不到一律返回 null，**绝不返回空串** ——
 //   返回空串会让上层以为「hosts 本来就是空的」，然后拿一份只有我们标记块的内容
 //   把整个文件覆盖掉，主人原有的 DNS 配置就全没了。null 是「不知道」，空串是「确实是空的」。
+// 最近一次「读 hosts 失败」的原因。
+//
+// ★ 为什么必须留着它 —— 真机踩到过。
+//   原来这里 catch 完直接吞掉，只返回 null，界面于是只能说
+//   「可能是被杀毒软件挡住了，或者权限不够」—— 那是**猜**，不是诊断。
+//   主人拿着这句话，既没法确认是不是杀软、也不知道下一步该点哪里。
+//   把系统给的错误码留下来，就能一眼分清是谁干的：
+//     ENOENT       文件不在了（被改名 / 删除 / 路径不对）
+//     EACCES/EPERM 被拒绝（杀毒、安全软件、权限）
+//     EBUSY        被别的程序占着（比如实时扫描）
+let lastReadError = null;
+
 function readHostsText(hostsPath) {
   try {
-    return fs.readFileSync(hostsPath).toString('latin1');
-  } catch {
+    const text = fs.readFileSync(hostsPath).toString('latin1');
+    // ★ 读成功必须把上一次的失败清掉。
+    //   不清的话，之后某次「其实读到了、但上层别的判断失败」会被怪到
+    //   这次头上，指着一个早就过去的错误码瞎猜。
+    lastReadError = null;
+    return text;
+  } catch (err) {
+    lastReadError = {
+      code: (err && err.code) || '',
+      message: (err && err.message) || String(err),
+      path: String(hostsPath),
+    };
     return null;
   }
+}
+
+// 最近一次读失败的原因；从没失败过就是 null。
+function readError() {
+  return lastReadError;
+}
+
+// 把系统错误码翻译成「主人看得懂 + 能照做」的一句话。
+// ★ 不同错误码必须给出**不同**的话 —— 都说同一句等于没说。
+function explainReadError(info) {
+  const code = info && info.code;
+  if (code === 'ENOENT') return 'hosts 文件不在了（可能被安全软件改名或删除）';
+  if (code === 'EACCES' || code === 'EPERM') {
+    return '系统拒绝了读取（多半是杀毒 / 安全软件在拦，把它加入信任区再试）';
+  }
+  if (code === 'EBUSY') return '文件正被别的程序占用，过一会儿再试';
+  return '系统没给出具体原因';
 }
 
 // 写 hosts 全文（latin1，逐字节）。
@@ -126,6 +165,8 @@ function buildRestorePlan({ restoreText, paths, now }) {
 
 module.exports = {
   readHostsText,
+  readError,
+  explainReadError,
   writeHostsText,
   computeBlock,
   residueOf,
