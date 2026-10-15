@@ -13,6 +13,8 @@
     "test:quit": "node scripts/test-quit.js",
     "test:week": "node scripts/test-week.js",
     "test:nl-time": "node scripts/test-nl-time.js",
+    "test:spring": "node scripts/test-spring.js",
+    "test:rubberband": "node scripts/test-rubberband.js",
     "test:brain-local": "node scripts/test-brain-local.js",
     "test:brain-cloud": "node scripts/test-brain-cloud.js",
     "test:brain-router": "node scripts/test-brain-router.js",

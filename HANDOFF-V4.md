@@ -60,7 +60,30 @@
 | 2.5 | 选择器改「先勾后存」+ 划过放大 + 无障碍 | ✅ | `fd8757d` |
 | 2.6 | 退出专注改「按住进度条」+ 专注页整体打磨 | ✅ | `9a1f95f` |
 | 2.6⁺ | 进度条改**蓝色** + 修掉按钮被 `.danger` 盖住的 bug | ✅ | `4afa448` |
-| **3** | **动效（弹簧/速度衔接/橡皮筋）+ 设置窗口改侧边栏** | ⏳ **下一步** | — |
+| 3-a | 动效**纯函数**：`spring.js` + `rubberband.js` + 自检 | ✅ 代码+自检全绿 | 已提交 |
+| **3-b** | **接进桌宠拖拽**：松手速度衔接 + 拖出边界橡皮筋 | ⏳ **下一步** | — |
+| 3-c | 设置窗口改**侧边栏** + 面板空间一致 + 减少动效 | ⏳ | — |
+
+> ⚠ 3-a 只是**纯数学**，界面行为一点没变 —— 所以它不需要真机验收，
+> 看曲线图和自检数字就够。**3-b 才动界面**，那一步必须主人亲手拖一次才算完
+> （拖拽手感合成事件测不了，见 §7）。
+
+### 批次 3-a 做了什么（2026-10-15）
+
+- `src/main/spring.js`：手写弹簧。语义参数是 apple-design 的
+  **damping（阻尼比）+ response（响应时间）**，不是 mass/stiffness/damping。
+  默认 `damping 1.0`（不弹）；只在手势带惯性时才给 ~0.8。
+  · `stepSpring(state, target, dt, opts)` —— state 就是 `{x, v}`，所以**天然可打断**
+    （打断时把当下的位置和速度喂进去即可，两者都不跳变）。
+  · **内部固定 1/240 秒子步长** —— 掉帧给个大 dt 也不会发散，结果还和帧率无关。
+  · `estimateVelocity(samples)` —— 松手时把指针速度算出来（只取最近 100ms）。
+  · 坏输入一律兜底成 0 / 原样返回，**绝不产出 NaN**。
+- `src/main/rubberband.js`：iOS 渐进阻力 `(1 - 1/(d·c/dim + 1))·dim`。
+  越拖越沉、永远不超上界、左右对称；系数夹在 `(0, 1]`。
+- 自检：`npm run test:spring`（37/0，负对照 8/8）、`npm run test:rubberband`（21/0，负对照 5/5）。
+  ★ 负对照里有两条是「**拿朴素写法算一遍证明这条断言真的能红**」：
+  不拆子步的朴素欧拉两步就飞到 -22007；打断时把速度清零会让轨迹明显不同。
+- 回归：纯 Node **19 套全绿，862 断言 0 失败**。
 
 ### 批次 3 要做什么（`PLAN-V4-UI升级.md` 第 271 行起有完整版）
 
@@ -142,6 +165,8 @@ npm run test:changed-check     # 17 通过 / 0 失败 · 负对照 8/8
 
 | 改了什么 | 会跑 |
 |---|---|
+| `spring.js` | spring |
+| `rubberband.js` | rubberband |
 | `focus/hosts.js` | focus-hosts · focus-helper · focus-intercept · focusmode-e2e |
 | `focus/timer.js` | focus-timer · focus-stop-ui · focusmode-e2e |
 | `focus/blacklist.js` | focus-blacklist · apps · picker-ui · focusmode-e2e |
@@ -162,6 +187,10 @@ npm run test:place            # 37
 npm run test:quit             # 8
 npm run test:week             # 53
 npm run test:nl-time          # 23
+
+# 动效纯函数（v4 批次 3-a）
+npm run test:spring           # 37（可打断 / 速度衔接 / 帧率无关 / 大 dt 不炸，负对照 8/8）
+npm run test:rubberband       # 21（渐进阻力 / 不超上界 / 对称，负对照 5/5）
 
 # 聊天大脑
 npm run test:brain-local      # 19

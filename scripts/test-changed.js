@@ -44,6 +44,8 @@ const SUITES = {
   'test:place': { kind: 'node', desc: '窗口摆位（纯函数）', covers: ['src/main/place.js'] },
   'test:week': { kind: 'node', desc: '周视图布局数学（纯函数）', covers: ['src/main/week.js', 'src/main/schedules.js'] },
   'test:nl-time': { kind: 'node', desc: '自然语言时间解析', covers: ['src/main/nl-time.js'] },
+  'test:spring': { kind: 'node', desc: '手写弹簧（可打断 / 速度衔接 / 帧率无关）', covers: ['src/main/spring.js'] },
+  'test:rubberband': { kind: 'node', desc: '橡皮筋边界（渐进阻力）', covers: ['src/main/rubberband.js'] },
 
   // —— 聊天大脑 ——
   'test:brain-local': { kind: 'node', desc: '本地聊天规则', covers: ['src/main/brain/local.js'] },
