@@ -2631,29 +2631,36 @@ async function runSettingsSelfTest() {
 
   // 负对照：无障碍「减少动态效果」时，按压位移必须被取消
   //   —— 本机默认不开，所以这条只能验「样式表里确实写了这段兜底」
+  //
+  // ⚠ 必须把所有 prefers-reduced-motion 块**合起来**看，不能只看第一个。
+  //   第一版是 `return`（遇到第一个就收工），后来 v4 批次 3 给进度条加了第二个
+  //   reduced-motion 块（只管 transition），排在前面 —— 于是这条断言当场假失败。
+  //   ★ 教训：**「找第一条就返回」的检查，在别人往同一个选择器上加规则时会烂掉。**
+  //     凡是要断言「样式表里有某条规则」，都该把命中的块拼起来再判。
   const a11y = await sw.webContents.executeJavaScript(`(() => {
-    let found = 0;
+    const blocks = [];
     for (const sh of document.styleSheets) {
       let rules; try { rules = sh.cssRules; } catch { continue; }
       for (const r of rules) {
         if (r.type === CSSRule.MEDIA_RULE && /prefers-reduced-motion/.test(r.conditionText || '')) {
-          found++;
-          const t = r.cssText || '';
-          return {
-            found: true,
-            // 必须同时出现：取消 transform + 保留淡入
-            killsTransform: /transform:\\s*none/.test(t),
-            hasFade: /picker-fade|opacity/.test(t),
-            mentionsPressing: /pressing/.test(t),
-          };
+          blocks.push(r.cssText || '');
         }
       }
     }
-    return { found: false };
+    const all = blocks.join('\\n');
+    return {
+      found: blocks.length > 0,
+      count: blocks.length,
+      killsTransform: /transform:\\s*none/.test(all),
+      hasFade: /picker-fade|opacity/.test(all),
+      mentionsPressing: /pressing/.test(all),
+    };
   })()`);
-  ok(a11y.found === true, '★ 样式表里有 prefers-reduced-motion 兜底块');
+  ok(a11y.found === true, '★ 样式表里有 prefers-reduced-motion 兜底块',
+    ` → 找到 ${a11y.count} 块（要合起来看，不能只看第一块）`);
   if (a11y.found) {
-    ok(a11y.killsTransform === true, '★ 负对照：「减少动态效果」时位移被取消（transform:none）');
+    ok(a11y.killsTransform === true, '★ 负对照：「减少动态效果」时位移被取消（transform:none）',
+      ` → 命中 ${a11y.count} 块`);
     ok(a11y.hasFade === true, '★ 但保留了透明度变化（反馈不能消失，只是变温和）');
     ok(a11y.mentionsPressing === true, '★ 负对照：JS 加的 .pressing 也在取消名单里（否则那条路会漏）');
   }

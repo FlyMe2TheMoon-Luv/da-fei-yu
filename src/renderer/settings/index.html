@@ -631,6 +631,15 @@
       font-size: var(--fs-title);
       line-height: var(--lh-title);
       letter-spacing: var(--ls-title);
+      margin: 0;
+    }
+    /* 返回按钮是「次要动线」，但它是这一页唯一的出口 —— 所以要有实边，
+       不能做成纯文字（那会让人找不到怎么回去）。 */
+    #btn-focus-back {
+      flex: none;
+      padding: 5px 10px;
+      font-size: var(--fs-sub);
+      line-height: var(--lh-sub);
     }
 
     /* 安全 DNS 提醒：三态三种颜色，不用红色吓人，但要看得见 */
@@ -639,14 +648,25 @@
       border: 1px solid;
       border-radius: var(--r-md);
       padding: var(--s-3);
-      font-size: 12.5px;
-      line-height: 1.75;
+      font-size: var(--fs-sub);
+      line-height: var(--lh-body);
+      letter-spacing: var(--ls-sub);
     }
     #focus-doh.hidden { display: none; }
     #focus-doh.warn    { background: var(--warn-050); border-color: var(--warn-line); color: var(--warn-500); }
-    #focus-doh.ok      { background: var(--ok-050); border-color: var(--ok-500); color: #0d7a48; }
-    #focus-doh.unknown { background: var(--n-2); border-color: var(--n-5); color: var(--n-8); }
+    /* ★ ok 这一档不能写死深绿 #0d7a48 —— 深色主题下它贴在深底上几乎看不见。
+       用更亮一点的绿（--ok-500 在两种主题下都够对比）。 */
+    #focus-doh.ok      { background: var(--ok-050); border-color: var(--ok-500); color: var(--ok-500); }
     #focus-doh b { font-weight: 600; }
+    /* ★ unknown 这一档最容易做成「装样子」：灰底灰字会和旁边的普通卡片长得一样，
+       于是主人根本不会注意到「我们没能确认」。所以给它一道左侧竖线 ——
+       这是「有话说」的标记，不是装饰。（三态里只有它加竖线。） */
+    #focus-doh.unknown {
+      background: var(--n-2);
+      border-color: var(--n-5);
+      border-left: 3px solid var(--n-6);
+      color: var(--n-8);
+    }
 
     /* 专注页的卡片和日程条目用同一套「纸」的语言：浅阴影 + 悬停加厚 */
     .focus-card {
@@ -657,12 +677,15 @@
       box-shadow: var(--sh-1);
       flex: none;
     }
+    /* ★ 苹果式的层级不是靠更大的字号，而是靠**字重 + 字距 + 颜色**的差：
+       标题收紧字距、正文放开行高。随便放大字号会显得很「网页」。 */
     .focus-h {
       margin: 0 0 var(--s-1);
       font-size: var(--fs-head);
       line-height: var(--lh-head);
       letter-spacing: var(--ls-head);
       font-weight: 600;
+      color: var(--text);
     }
     .focus-hint {
       margin: var(--s-1) 0 var(--s-3);
@@ -671,12 +694,19 @@
       letter-spacing: var(--ls-sub);
       color: var(--muted);
     }
+    /* 空着的状态行不占位（否则「松手太早」消失后卡片会跳一下） */
+    .focus-hint:empty { display: none; }
 
-    .focus-col + .focus-col { margin-top: var(--s-3); }
+    .focus-col + .focus-col { margin-top: var(--s-4); }
+    /* 列标题是「小标签」不是「小标题」：小字号 + 放开字距 + 弱色。
+       ★ 这里**不用** text-transform: uppercase —— 标签是中文，那个属性一个字都不会变，
+         纯属摆设；更要紧的是它会让人误以为「已经有了大小写规范」而放松对字距的要求。 */
     .focus-col-head {
-      font-size: 12.5px;
+      font-size: var(--fs-micro);
+      line-height: var(--lh-micro);
+      letter-spacing: var(--ls-micro);
       color: var(--muted);
-      margin-bottom: 6px;
+      margin-bottom: var(--s-2);
     }
     .focus-add {
       display: flex;
@@ -689,9 +719,13 @@
       font-size: var(--fs-body);
       padding: 7px 10px;
       border: 1px solid var(--line);
-      border-radius: 7px;
-      background: #fff;
+      /* ★ 走 token，不写死：写死 #fff 的话深色主题下会变成一块「白板」，
+         而且圆角和 `.field input`（--r-sm）不一致 —— 同一个界面里两种圆角会显脏。 */
+      border-radius: var(--r-sm);
+      background: var(--n-0);
       color: var(--text);
+      transition: border-color var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out);
     }
     .focus-add input:focus {
       outline: none;
@@ -706,18 +740,31 @@
       padding: 0;
       display: flex;
       flex-direction: column;
-      gap: 5px;
+      gap: var(--s-1);
     }
     .focus-list:empty { display: none; }
+    /* 名单空着的时候给一句「这里会有什么」，不然两个空框看起来像坏了。
+       用 `:has(> .focus-list:empty)` —— 只有真的空才显示，不需要 JS 管。 */
+    .focus-col .focus-empty { display: none; }
+    .focus-col:has(> .focus-list:empty) .focus-empty {
+      display: block;
+      margin: var(--s-2) 0 0;
+      font-size: var(--fs-sub);
+      line-height: var(--lh-sub);
+      letter-spacing: var(--ls-sub);
+      color: var(--n-6);
+    }
     .focus-list li {
       display: flex;
       align-items: center;
       gap: var(--s-2);
-      padding: 6px 10px;
+      padding: 7px 10px;
       background: var(--n-2);
       border: 1px solid var(--line);
       border-radius: var(--r-sm);
       font-size: var(--fs-body);
+      line-height: var(--lh-body);
+      letter-spacing: var(--ls-body);
     }
     .focus-list li .focus-val {
       flex: 1;
@@ -737,10 +784,16 @@
       color: var(--muted);
       cursor: pointer;
       transition: border-color var(--t-base) var(--ease-out),
+                  background var(--t-base) var(--ease-out),
                   color var(--t-base) var(--ease-out);
     }
-    .focus-list li .focus-del:hover { border-color: var(--danger-500); color: var(--danger-500); }
+    .focus-list li .focus-del:hover {
+      border-color: var(--danger-500);
+      background: var(--danger-050);
+      color: var(--danger-500);
+    }
     .focus-list li .focus-del:active { transform: scale(.92); }
+    .focus-list li .focus-del:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 
     #focus-error {
       margin: var(--s-2) 0 0;
@@ -765,9 +818,15 @@
       color: var(--text);
       box-shadow: var(--sh-1);
       font-variant-numeric: tabular-nums;
+      transition: background var(--t-base) var(--ease-out),
+                  border-color var(--t-base) var(--ease-out),
+                  color var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out),
+                  transform var(--t-fast) var(--ease-out);
     }
     .focus-presets button:hover { border-color: var(--n-5); background: var(--n-1); }
-    .focus-presets button:active { box-shadow: none; }
+    .focus-presets button:active { box-shadow: none; transform: scale(.97); }
+    .focus-presets button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
     .focus-presets button.on {
       border-color: var(--primary);
       background: var(--a-050);
@@ -775,7 +834,9 @@
       font-weight: 600;
       box-shadow: none;
     }
-
+    /* 选中的那个再划过时不许退回「普通按钮」的样子 */
+    .focus-presets button.on:hover { border-color: var(--primary); background: var(--a-050); }
+    /* 自定义分钟那一行：跟上面两个输入行长得一样，不要多一套间距 */
     #focus-custom-row { margin-top: var(--s-3); }
     #focus-custom-row.hidden { display: none; }
     #focus-custom-row input {
@@ -786,10 +847,21 @@
       padding: 7px 10px;
       border: 1px solid var(--line);
       border-radius: var(--r-sm);
+      background: var(--n-0);
+      color: var(--text);
+      transition: border-color var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out);
+    }
+    /* 自定义分钟输入框和上面两个输入框要长得一样（不然一个界面三种样子） */
+    #focus-custom-row input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--a-ring);
     }
 
     #focus-run { text-align: center; }
     #focus-idle.hidden, #focus-running.hidden { display: none; }
+    /* 主行动按钮：整页唯一的实心按钮，所以给它最重的层级（阴影 + 大字号） */
     .focus-start {
       width: 100%;
       padding: 12px 0;
@@ -799,8 +871,12 @@
       font-weight: 600;
       border-radius: var(--r-md);
       box-shadow: var(--sh-2);
+      transition: background var(--t-base) var(--ease-out),
+                  box-shadow var(--t-base) var(--ease-out),
+                  transform var(--t-fast) var(--ease-out);
     }
-    .focus-start:active { box-shadow: none; }
+    .focus-start:hover { box-shadow: var(--sh-3); }
+    .focus-start:active { box-shadow: none; transform: scale(.99); }
     .focus-ring-wrap {
       position: relative;
       width: 150px;
@@ -830,16 +906,74 @@
       font-variant-numeric: tabular-nums;
       color: var(--text);
     }
+    /* 专注进行中时，圆环是主角，卡片里其它东西都得让位：去掉空卡片的多余留白 */
+    #focus-run #focus-running .focus-hint:empty { display: none; }
+    /* 退出按钮：自己也当进度条用。
+       ★ 进度用 `--hold`（0→1）驱动，JS 每帧写一个数；填充的宽度/透明度都读它，
+         这样「减少动效」时只要不写这个变量、改成直接写宽度，视觉依然连贯。
+       ★ 苹果原则里的「可打断」在这里＝**松手立刻回退**，所以回退要快（160ms），
+         而涨上去要跟手（线性、时长＝主进程给的 holdMs），不能自己加 easing 拖着。 */
     .focus-stop {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
       width: 100%;
       padding: 11px 0;
       font-size: var(--fs-body);
       border-radius: var(--r-md);
       user-select: none;
+      -webkit-user-select: none;
+      touch-action: none; /* 长按时别触发滚动/缩放手势 */
+      --hold: 0;
     }
+    /* 轨道：按住之前就能看出「这里会涨」 */
+    .focus-stop::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: -2;
+      background: var(--n-2);
+      opacity: .55;
+    }
+    .focus-stop-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      z-index: -1;
+      width: 100%;
+      transform: scaleX(var(--hold));
+      transform-origin: left center;
+      background: var(--danger-500);
+      /* 涨：跟着手指，线性；退：快，让人感觉「一松就回来了」 */
+      transition: transform 160ms var(--ease-out);
+    }
+    .focus-stop.holding { border-color: var(--danger-500); }
+    /* 按住期间填充跟手，不加过渡（否则会落后于手感） */
+    .focus-stop.holding .focus-stop-fill { transition: none; }
+    .focus-stop-label { position: relative; z-index: 1; }
+    /* 填充从左边扫过来，文字会有一段压在红底上 —— 加重文字阴影保证任何进度都读得清 */
     .focus-stop.holding {
-      background: var(--danger-050);
+      color: #fff;
       border-color: var(--danger-500);
+      background: var(--danger-500);
+    }
+    .focus-stop.holding .focus-stop-label {
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, .35);
+      font-weight: 600;
+    }
+    .focus-stop:disabled { opacity: .55; }
+    /* 键盘也能退：Tab 到它、按住空格/回车（原生按住会连发 keydown，我们按第一次算） */
+    .focus-stop:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+    /* 减少动效：取消位移/缩放，保留进度本身的可见变化（那是信息，不是装饰） */
+    @media (prefers-reduced-motion: reduce) {
+      .focus-stop-fill { transition: none; }
+    }
+    /* 提高对比度：给轨道一个实边，别只剩一层淡底 */
+    @media (prefers-contrast: more) {
+      .focus-stop::before { opacity: 1; border: 2px solid var(--text); }
+      .focus-stop-fill { background: var(--danger-600); }
     }
 
     /* ---------- 已安装软件选择器（v4 批次 1） ---------- */
@@ -1176,6 +1310,7 @@
       .app-cell.pressing,
       .switch:active,
       .focus-list li .focus-del:active,
+      .focus-presets button:active,
       .blk:active,
       .focus-start:active { transform: none !important; }
       /* ★ 批次 2.5 新增的动效也要一起取消：
@@ -1212,6 +1347,10 @@
       .app-cell { border-width: 2px; }
       .app-cell.picked { outline: 1px solid var(--primary); }
       .ghost, .danger, .focus-presets button { border-color: var(--n-6); }
+      /* 专注页：黑名单条目和输入框的描边也要加深，否则在浅底上几乎看不见边界 */
+      .focus-list li, .focus-add input, #focus-custom-row input { border-color: var(--n-6); }
+      .focus-presets button.on { border-width: 2px; }
+      .focus-ring .ring-bg { stroke: var(--n-5); }
     }
   </style>
 </head>
@@ -1318,26 +1457,32 @@
       <p class="focus-hint">开始专注后，这些网站打不开、这些软件会被关掉。专注结束自动恢复。</p>
 
       <div class="focus-col">
-        <div class="focus-col-head">网站</div>
+        <div class="focus-col-head" id="focus-domains-head">网站</div>
         <div class="focus-add">
-          <input id="f-domain-input" placeholder="比如 bilibili.com" autocomplete="off" />
-          <button id="btn-add-domain" class="primary" title="加进黑名单">＋</button>
+          <input id="f-domain-input" placeholder="比如 bilibili.com" autocomplete="off"
+                 aria-labelledby="focus-domains-head" />
+          <button id="btn-add-domain" class="primary" title="把这个网站加进黑名单"
+                  aria-label="把网站加进黑名单">＋</button>
         </div>
         <ul id="focus-domains" class="focus-list"></ul>
+        <p class="focus-empty">还没加网站。在上面的框里打一个域名，按 ＋。</p>
       </div>
 
       <div class="focus-col">
-        <div class="focus-col-head">软件</div>
+        <div class="focus-col-head" id="focus-exes-head">软件</div>
         <div class="focus-add">
-          <input id="f-exe-input" placeholder="比如 steam.exe" autocomplete="off" />
-          <button id="btn-add-exe" class="primary" title="加进黑名单">＋</button>
+          <input id="f-exe-input" placeholder="比如 steam.exe" autocomplete="off"
+                 aria-labelledby="focus-exes-head" />
+          <button id="btn-add-exe" class="primary" title="把这个软件加进黑名单"
+                  aria-label="把软件加进黑名单">＋</button>
         </div>
         <!-- v4 批次 1：不用记程序名了，点图标就能加 -->
         <button id="btn-browse-apps" class="ghost browse-btn">🔍 浏览已安装软件</button>
         <ul id="focus-exes" class="focus-list"></ul>
+        <p class="focus-empty">还没加软件。点上面的按钮从装好的程序里挑，或者自己填程序名。</p>
       </div>
 
-      <div id="focus-error" class="hidden"></div>
+      <div id="focus-error" class="hidden" role="alert"></div>
     </section>
 
     <!-- 2. 专注多久 -->
@@ -1355,6 +1500,8 @@
     <section class="focus-card" id="focus-run">
       <div id="focus-idle">
         <button id="btn-focus-start" class="primary focus-start">开始专注</button>
+        <!-- ⚠ 秒数由 settings.js 按 focusData.holdMs 填（见 syncIdleHint），这里只是兜底。
+             写死的话，万一以后规则改成 5 秒，这一句就开始骗人了。 -->
         <p class="focus-hint" id="focus-idle-hint">开始后，大肥鱼会陪着你，中途想提前结束得长按 3 秒。</p>
       </div>
 
@@ -1366,8 +1513,17 @@
           </svg>
           <div id="focus-countdown" class="focus-countdown">25:00</div>
         </div>
-        <button id="btn-focus-stop" class="danger focus-stop">长按 3 秒结束</button>
-        <p class="focus-hint" id="focus-stop-hint"></p>
+        <!-- 退出按钮 = 「长按 3 秒」的进度条（v4 批次 3）。
+             三层：底色轨道 → 按住时长出来的填充 → 盖在上面的文字。
+             ⚠ 进度**不是**「还剩多少专注时间」，而是「这个退出动作按到哪了」——
+               所以它和上面的圆环各管各的，别合并（会让人以为专注只剩 3 秒）。
+             ★ 松手就回退：这是我们故意的「可打断」，不是 bug。 -->
+        <button id="btn-focus-stop" class="danger focus-stop" type="button"
+                aria-describedby="focus-stop-hint">
+          <span class="focus-stop-fill" id="focus-stop-fill" aria-hidden="true"></span>
+          <span class="focus-stop-label" id="focus-stop-label">长按 3 秒结束</span>
+        </button>
+        <p class="focus-hint" id="focus-stop-hint" role="status" aria-live="polite"></p>
       </div>
     </section>
   </div>

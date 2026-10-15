@@ -350,6 +350,39 @@ desktop-pet/
     而汇总数字看着完全正常（只是悄悄少了几条）。凡是自检里有 `await` / Promise，
     整段必须包在一个 `async main()` 里、`await` 完再打印「结果：」。
     ★ 自查办法：数一下「实际打印出来的断言条数」和「你写的断言条数」对不对得上。
+61. **★ 按住类交互要用 `setPointerCapture`，别用 `pointerleave` 取消** —— v4 批次 3 踩到：
+    「退出专注」做成「按住 3 秒」的进度条，第一版在 `pointerleave` 里 `endHold()`。
+    结果是：主人好不容易按到 2.9 秒、手指偏一个像素出界，进度**当场归零**。
+    ★ 正解：`pointerdown` 时 `setPointerCapture(e.pointerId)` —— 捕获之后指针事件
+    一直送到这个元素，`pointerleave` 根本不会触发；真正的松手只有 `pointerup` /
+    `pointercancel`（系统手势）两种。多手指/丢焦点要 `try/catch`（指针可能已被回收）。
+    ★ 顺带一条：`blur` 里取消按住**只对键盘那一路生效** —— 鼠标按住期间窗口失焦
+    不属于「松手」，在那里提前回退同样是坑人。
+62. **★ 「进度条」和「剩余时间」是两件事，绝不许共用一个 ratio** —— v4 批次 3：
+    专注页上圆环是「专注还剩多久」，退出按钮是「这个退出动作按到哪」。
+    两者一旦接在一起，主人会看到「专注只剩 3 秒」的假象（其实是按退出的进度）。
+    ★ 自检钉法：把会话调成「快到点」（圆环 ratio ≈ 1），断言**没按的时候进度条必须是 0**；
+    再按住，断言圆环在那个时间窗里**基本没动**。这两条一起才说明「各管各的」。
+63. **★ 「找第一个就 return」的检查，会在别人加同选择器时烂掉** —— v4 批次 3 踩到：
+    `settings-e2e` 里验「`prefers-reduced-motion` 块里有 `transform:none`」，
+    写法是遍历 `document.styleSheets`，**遇到第一个就 `return`**。
+    这一批给进度条加了第二个 `prefers-reduced-motion` 块（只管 `transition`），
+    排在文档靠前的位置 → 那条断言当场假失败（三条一起红）。
+    ★ 正解：把所有命中的块 `join('\n')` 拼起来再判，并顺带打印「找到几块」。
+    ★ 教训泛化：**凡是要断言「样式表/配置里存在某条规则」，都要检查全集，不能抽样第一条。**
+64. **★ 夹具比真货少字段，测的就是假货** —— v4 批次 3 踩到：写 `test-focus-stop-ui.js` 时，
+    假主进程的 `snapshot()` 只塞了 `session`，漏了真 `focus/index.js` 会一起给的
+    `remainingMs` 和 `progressRatio`。后果：
+      · 圆环算成 0（满环）→ 「圆环快空了」的**前提**断言假失败；
+      · 倒计时画成 **`NaN:NaN`**（从截图里才看出来）。
+    ★ 两条教训：① 夹具要么**从真实现抄一份**，要么在注释里写明「必须和 X 的 state() 一致」；
+    ② 界面永远不能把坏载荷画成 `NaN` —— 见第 65 条。
+65. **★ 界面绝不许把坏输入画成 `NaN`** —— 和第 64 条是同一个事故的两面。
+    `fmtClock(undefined)` 原来算出来是 `NaN:NaN`，一眼看去像整个专注模式坏了。
+    ★ 修法：所有「数字 → 显示文本」的出口先做一次兜底 ——
+    `const raw = Number(ms); Number.isFinite(raw) ? raw : 0`，负数夹到 0。
+    ★ 自检要钉**负对照**：`fmtClock(undefined/null/NaN/'abc'/-5000)` 全部不许含 `NaN`，
+    并且用旧写法算一遍证明「这条断言真的能红」。
 50. **中文过滤规则不能照抄英文那套「词边界」** —— v4 踩到：过滤卸载项时写了
     `(^|[\s\-_])(uninstall|卸载)([\s\-_.]|$)`，英文的 `Uninstall` 能匹配，
     可中文的「卸载微信」「卸载火绒」**一条都匹配不上**（中文没有空格当分隔符）。
@@ -447,10 +480,11 @@ npm run test:focus-intercept # 专注·系统薄壳 56
 npm run test:focus-wiring    # 专注·接线/默认值（专抓「自检全绿真机挂」）17
 npm run test:apps            # v4·已安装软件扫描（解析 lnk / 过滤 / 并发图标）105
 npm run test:picker-ui       # v4·软件选择器（真渲染进程 + 真 preload + 内存 IPC）49
+npm run test:focus-stop-ui   # v4·退出专注的长按进度条（真渲染进程 + 内存 IPC）54
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
-npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页 + 软件选择器 + 视觉层）142
+npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页 + 软件选择器 + 视觉层）160
 npm run test:focusmode-e2e   # 专注模式端到端 60
 npm run test:week-e2e        # 周视图端到端 19
 npm run test:chat-e2e        # 聊天端到端 17

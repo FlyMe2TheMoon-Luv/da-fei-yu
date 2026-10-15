@@ -53,7 +53,7 @@ module.exports = {
 
     if (!cw || cw.isDestroyed()) {
       log('✗ 聊天条没开出来，后面没法测');
-      return finish(pass, fail + 1);
+      return finish(pass, fail + 1, '聊天');
     }
 
     const web = cw.webContents;
@@ -184,6 +184,8 @@ module.exports = {
 
     log(`\n===== 聊天自检结束：${pass} 通过 / ${fail} 失败 =====`);
     log(`  （负对照：${negPass} 通过 / ${negFail} 失败）`);
-    finish(pass, fail);
+    // ⚠ 必须传 label：`finish` 就是 finishExitTest，不传就默认写「退出按钮自检结束」——
+    //   于是聊天/专注模式跑完，日志上却写着「退出按钮」，查问题时会看错套件。
+    finish(pass, fail, '聊天');
   },
 };

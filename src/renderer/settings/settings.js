@@ -66,12 +66,14 @@ const el = {
   fCustomMin: document.getElementById('f-custom-min'),
   btnCustomOk: document.getElementById('btn-custom-ok'),
   focusIdle: document.getElementById('focus-idle'),
+  focusIdleHint: document.getElementById('focus-idle-hint'),
   focusRunning: document.getElementById('focus-running'),
   btnFocusStart: document.getElementById('btn-focus-start'),
   btnFocusStop: document.getElementById('btn-focus-stop'),
   focusCountdown: document.getElementById('focus-countdown'),
   focusRingFg: document.getElementById('focus-ring-fg'),
   focusStopHint: document.getElementById('focus-stop-hint'),
+  focusStopLabel: document.getElementById('focus-stop-label'),
 };
 
 // 星期几的显示顺序按中文习惯：周一在前、周日在最后。
@@ -90,8 +92,7 @@ let focusData = null;      // 最近一次从主进程拿到的专注状态
 let draftDomains = [];     // 界面上的黑名单草稿（网站）—— 加一条就整份存回去
 let draftExes = [];        // 界面上的黑名单草稿（软件）
 let countdownTimer = null; // 专注中每秒刷新倒计时的定时器
-let holdTimer = null;      // 「长按结束」的计时器
-let holdStart = null;      // 「长按结束」按下那一刻
+let holdStart = null;      // 「长按结束」按下那一刻（进度条也按它算进度）
 
 // ---- 软件选择器（v4 批次 1；批次 2.5 改「先勾后存」）----
 let installedApps = null;  // 最近一次从主进程拿到的「已安装软件」列表（null = 还没扫）
@@ -415,8 +416,12 @@ async function openFromBlank(dayKey, hour) {
 //   「长按 3 秒」这个时长也是主进程给的（focusData.holdMs），别在这里写死。
 
 // 毫秒 → 「MM:SS」（超过 1 小时就显示「H:MM:SS」）
+// ★ 传进来不是有限数字时一律当 0 —— 界面上宁可显示 00:00，也**绝不能出现 NaN:NaN**。
+//   那不是「小瑕疵」：一眼看去像坏掉了，主人会以为专注模式整个坏了。
+//   （自检夹具少给一个字段就复现过这个画面。）
 function fmtClock(ms) {
-  const total = Math.max(0, Math.ceil(ms / 1000));
+  const raw = Number(ms);
+  const total = Math.max(0, Math.ceil(Number.isFinite(raw) ? raw / 1000 : 0));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
@@ -485,7 +490,26 @@ function renderFocusRun() {
   const running = !!(focusData && focusData.running);
   el.focusIdle.classList.toggle('hidden', running);
   el.focusRunning.classList.toggle('hidden', !running);
-  if (running) refreshCountdownFrom(focusData);
+  // 秒数只从主进程来（默认 3），不在界面里写死 —— 写死了以后改规则就是在骗人。
+  const secs = holdSeconds();
+  // 「还没开始」那一句也要跟着走（它同样写着秒数）
+  if (el.focusIdleHint) {
+    el.focusIdleHint.textContent = `开始后，大肥鱼会陪着你，中途想提前结束得长按 ${secs} 秒。`;
+  }
+  if (running) {
+    refreshCountdownFrom(focusData);
+    const label = `长按 ${secs} 秒结束`;
+    el.btnFocusStop.dataset.idleLabel = label;
+    el.focusStopLabel.textContent = label;
+    el.btnFocusStop.title = `按住不放 ${secs} 秒才会结束（防止手滑）`;
+  }
+}
+
+// 主进程给的「长按多久才算数」，换算成秒（默认 3 秒）。
+// ★ 只此一处换算：按钮标签、还没开始时的说明、松手太早的提示都用它，
+//   免得三处各写一个数、改一个忘两处。
+function holdSeconds() {
+  return Math.round(((focusData && focusData.holdMs) || 3000) / 1000);
 }
 
 // 用一份状态刷新倒计时数字 + 进度环
@@ -497,7 +521,7 @@ function refreshCountdownFrom(data) {
   const r = 52;
   const C = 2 * Math.PI * r;
   el.focusRingFg.style.strokeDasharray = String(C);
-  const ratio = Math.max(0, Math.min(1, data.progressRatio || 0));
+  const ratio = Math.max(0, Math.min(1, Number(data.progressRatio) || 0));
   el.focusRingFg.style.strokeDashoffset = String(C * ratio);
 }
 
@@ -678,6 +702,10 @@ async function finishStop() {
   endHold(true);
   const res = await api.focusStop({ pressedAt });
   if (!res || res.ok === false) {
+    // 主进程拒绝了（例如启动那一刻手滑、或会话已经结束）。
+    // ★ 这时进度条已经缩回 0 了，但**不要**留一句「按住别松手…」——
+    //   那是在描述一个已经结束的动作，会让人以为还得继续按。
+    el.focusStopHint.textContent = '';
     showFocusError((res && res.error) || '还结束不了');
     return;
   }
@@ -687,34 +715,80 @@ async function finishStop() {
   toast('已结束专注，休息一下～');
 }
 
-// 长按：pointerdown 记时刻 → 每 100ms 看够没够 → 够了自动结束。
-// 中途松手 / 移开就取消（这就是「长按 3 秒」的界面实现）。
+// ---------- 退出专注：长按进度条（v4 批次 3）----------
+//
+// 之前只有一句「按住别松手… 还差 X 秒」的文字。现在按钮**自己变成进度条**：
+// 按住时红色填充从左往右涨满，松手立刻缩回去。
+//
+// ★ 三条刻意守住的规矩：
+//   ① **难度一点没变**：仍然是「按住 holdMs（主进程给的，默认 3 秒）才放行」。
+//      进度条只是把「按到哪了」画出来，没有让退出变容易 —— 它是自律工具。
+//   ② **进度 ≠ 剩余时间**：上面的圆环是「专注还剩多久」，这条是「退出动作按到哪」。
+//      两件事各管各的，合并了会让人误以为专注只剩 3 秒。
+//   ③ **可打断**（apple-design 第 3 节）：松手就回退、可以立刻重按，回退要快（160ms），
+//      涨上去要跟手（线性、时长＝holdMs），不额外加 easing 拖着。
+//
+// ⚠ 是不是「够 3 秒了」**仍然由主进程说了算**（`api.focusStop({pressedAt})`）。
+//   界面这里只负责画进度；就算有人改坏这段，主进程照样会拒绝。
+
+let holdRaf = null;
+
+// 把进度写进 CSS 变量（0→1）。用 rAF 而不是 setInterval：
+// 进度是动画，跟着屏幕刷新走最跟手，也不会在后台标签里白烧 CPU。
+function setHoldProgress(ratio) {
+  const r = Math.max(0, Math.min(1, ratio));
+  el.btnFocusStop.style.setProperty('--hold', String(r));
+  return r;
+}
+
+// ★ 只读的自检窗口：自检要能问「现在进度是多少、在不在按住」，
+//   而不是靠等固定毫秒数去猜（猜的断言会在慢机器上假失败）。
+//   刻意只暴露**读**，不暴露写 —— 免得自检能伪造进度、把假象验成真的。
+window.__focusHoldDebug = {
+  progress: () => parseFloat(el.btnFocusStop.style.getPropertyValue('--hold')) || 0,
+  holding: () => holdStart !== null,
+  // 「按到哪了」换算成毫秒，方便断言「还没够 holdMs 就绝对不许放行」
+  elapsedMs: () => (holdStart === null ? 0 : Date.now() - holdStart),
+  needMs: () => (focusData && focusData.holdMs) || 3000,
+};
+
+// 松手/移开/取消都走这里。completed = true 表示「按够了」，由主进程最终裁定。
 function beginHold() {
   if (holdStart) return;
   if (focusData && focusData.running === false) return;
+  // 主进程给的时长（默认 3000），界面不写死
+  const need = (focusData && focusData.holdMs) || 3000;
+
   holdStart = Date.now();
   el.btnFocusStop.classList.add('holding');
   el.focusStopHint.textContent = '按住别松手…';
+  el.focusStopLabel.textContent = '松开就取消';
 
-  const need = (focusData && focusData.holdMs) || 3000;
-  holdTimer = setInterval(() => {
-    if (!holdStart) return;
+  const tick = () => {
+    if (!holdStart) return; // 已经松手了
     const elapsed = Date.now() - holdStart;
-    if (elapsed >= need) {
+    const ratio = setHoldProgress(elapsed / need);
+    if (ratio >= 1) {
       finishStop();
-    } else {
-      el.focusStopHint.textContent = `按住别松手… 还差 ${((need - elapsed) / 1000).toFixed(1)} 秒`;
+      return;
     }
-  }, 100);
+    holdRaf = requestAnimationFrame(tick);
+  };
+  setHoldProgress(0);
+  holdRaf = requestAnimationFrame(tick);
 }
 
-// 松手（cancel = true 表示「没按够就松了」，给一句提示）
+// 松手（completed = true 表示「按够了、放行」）
 function endHold(completed) {
-  if (holdTimer) { clearInterval(holdTimer); holdTimer = null; }
+  if (holdRaf) { cancelAnimationFrame(holdRaf); holdRaf = null; }
   const wasHolding = holdStart !== null;
   holdStart = null;
   el.btnFocusStop.classList.remove('holding');
-  if (!completed && wasHolding) el.focusStopHint.textContent = '松手太早啦，得按住 3 秒才行';
+  // 回退到 0（CSS 里有 160ms 过渡，看起来就是「缩回去了」）
+  setHoldProgress(0);
+  el.focusStopLabel.textContent = el.btnFocusStop.dataset.idleLabel || '长按 3 秒结束';
+  // 提示语里的秒数也走同一个来源（见 holdSeconds）
+  if (!completed && wasHolding) el.focusStopHint.textContent = `松手太早啦，得按住 ${holdSeconds()} 秒才行`;
   if (completed) el.focusStopHint.textContent = '';
 }
 
@@ -1252,11 +1326,57 @@ el.fCustomMin.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); applyCustomMinutes(); }
 });
 
-// 长按 3 秒结束（别照抄「点一下就走」——那等于没有专注）
-el.btnFocusStop.addEventListener('pointerdown', (e) => { e.preventDefault(); beginHold(); });
-el.btnFocusStop.addEventListener('pointerup', () => endHold(false));
-el.btnFocusStop.addEventListener('pointerleave', () => endHold(false));
-el.btnFocusStop.addEventListener('pointercancel', () => endHold(false));
+// 长按 3 秒结束（别照抄「点一下就走」——那等于没有专注）。
+// ★ 鼠标按住 / 触屏按住 / 键盘按住空格或回车，三种都要能退：
+//   键盘长按会**连发 keydown**，所以用一个标志保证只从第一次开始计时（否则进度会被反复重置）。
+//
+// ★ 为什么按住时要 setPointerCapture（而不是靠 pointerleave 取消）：
+//   按钮上写着「松开就取消」，那么「手抖滑出去一点」必须**不算松开** ——
+//   否则主人好不容易按到 2.9 秒、手指偏一个像素，进度就归零了，非常气人。
+//   捕获之后指针事件一直送到这个元素，`pointerleave` 根本不会触发；
+//   真正的松手只有 pointerup / pointercancel（系统手势打断）两种。
+//   ★ 这也解释了下面那条：**不要**在 pointerleave 里 endHold —— 那是「以为在帮人、其实在坑人」。
+let holdKeyDown = false;
+let holdPointerId = null;
+
+el.btnFocusStop.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  // 捕获指针，让「按住」不怕手滑（松开才算松）
+  try {
+    el.btnFocusStop.setPointerCapture(e.pointerId);
+    holdPointerId = e.pointerId;
+  } catch { holdPointerId = null; }
+  beginHold();
+});
+el.btnFocusStop.addEventListener('pointerup', () => {
+  if (holdPointerId !== null) { try { el.btnFocusStop.releasePointerCapture(holdPointerId); } catch { /* 已经回收 */ } holdPointerId = null; }
+  endHold(false);
+});
+// 系统手势（比如触屏从底部上划）会发 pointercancel —— 那是真的被打断了，必须回退
+el.btnFocusStop.addEventListener('pointercancel', () => {
+  holdPointerId = null;
+  endHold(false);
+});
+el.btnFocusStop.addEventListener('keydown', (e) => {
+  if (e.key !== ' ' && e.key !== 'Enter' && e.key !== 'Spacebar') return;
+  e.preventDefault(); // 空格默认会「滚动/点一下」，这里要的是「按住」
+  if (holdKeyDown) return;
+  holdKeyDown = true;
+  beginHold();
+});
+el.btnFocusStop.addEventListener('keyup', (e) => {
+  if (e.key !== ' ' && e.key !== 'Enter' && e.key !== 'Spacebar') return;
+  holdKeyDown = false;
+  endHold(false);
+});
+// 焦点被抢走 = 键盘长按断了（不然会一直涨下去）。
+// ⚠ 只在「键盘那一路」上取消：鼠标按住期间如果窗口失去焦点，
+//   指针捕获和 pointerup 还是会来，不该在这里提前回退。
+el.btnFocusStop.addEventListener('blur', () => {
+  if (!holdKeyDown) return;
+  holdKeyDown = false;
+  endHold(false);
+});
 
 // 主进程换完窗口尺寸后的回执。
 // 自己点按钮切的时候，这里拿到的和本地已经设好的一样 → 直接 return，避免重复渲染。
