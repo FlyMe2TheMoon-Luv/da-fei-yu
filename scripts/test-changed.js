@@ -188,10 +188,15 @@ const NO_SUMMARY = new Set(['test:drag']); // 性能基准，只印测量值
 
 function parseSummary(out) {
   let m = out.match(/(?:结果|结束)：\s*(\d+)\s*通过\s*\/\s*(\d+)\s*失败/);
-  if (m) return { pass: +m[1], fail: +m[2] };
+  if (m) return { pass: +m[1], fail: +m[2], recognized: true };
   m = out.match(/(\d+)\s+passed\s*\/\s*(\d+)\s+failed/);
-  if (m) return { pass: +m[1], fail: +m[2] };
-  return { pass: null, fail: null };
+  if (m) return { pass: +m[1], fail: +m[2], recognized: true };
+  // 第四种：只印「通过 / 不通过」，没有计数（scheduler-e2e 就是这样）。
+  // ★ 这里**不能**一律当成「通过」—— 否则将来哪套印出「结束：不通过」会变成假绿。
+  //   所以要把那个词抓出来判：只有正好是「通过」才算 fail=0。
+  const m3 = out.match(/(?:结果|结束)：\s*(不通过|未通过|失败|通过)/);
+  if (m3) return { pass: null, fail: m3[1] === '通过' ? 0 : 1, recognized: true };
+  return { pass: null, fail: null, recognized: false };
 }
 
 const SCRIPTS = require('../package.json').scripts;
@@ -206,11 +211,11 @@ function commandOf(name) {
 
 // 判定「这一套算不算过」——单独抽成纯函数，好让 --selfcheck 拿假输出验它
 function judge({ name, code, out, timedOut, spawnErr }) {
-  const { pass, fail } = parseSummary(out);
+  const { pass, fail, recognized } = parseSummary(out);
   const noSummary = NO_SUMMARY.has(name);
   // 退出码和收尾行**两个都要看**：任一不对就是红
   const ok = !timedOut && !spawnErr && code === 0 && (fail === null || fail === 0);
-  return { pass, fail, noSummary, ok };
+  return { pass, fail, recognized, noSummary, ok };
 }
 
 function runSuite(name, timeoutMs) {
@@ -278,6 +283,13 @@ async function selfcheck() {
   // ★ 负对照：英文格式里有失败也必须判红
   v = J({ out: 'FOCUS-STOP RESULT: 60 passed / 5 failed' });
   check(!v.ok && v.fail === 5, '英文格式里 5 条失败 → 判红（负对照：它红才算对）', true, `ok=${v.ok} fail=${v.fail}`);
+  // ★ 第四种：只印结论不印计数（scheduler-e2e 的「结束：通过」）
+  v = J({ out: '===== 调度引擎自检结束：通过 =====' });
+  check(v.ok && v.recognized === true, '「结束：通过」（无计数）→ 认出来，不报「没读到收尾行」',
+    `recognized=${v.recognized} ok=${v.ok}`);
+  // ★★ 负对照：同一套印「不通过」必须判红 —— 不然这里就是个假绿通道
+  v = J({ out: '===== 调度引擎自检结束：不通过 =====' });
+  check(!v.ok, '★ 「结束：不通过」必须判红（负对照：无计数的收尾行最容易变成假绿）', true, `ok=${v.ok}`);
   // ★ 负对照：有失败必须判红
   v = J({ out: '===== 结果：5 通过 / 2 失败 =====' });
   check(!v.ok && v.fail === 2, '有 2 条失败 → 判红（负对照：它红才算对）', true, `ok=${v.ok} fail=${v.fail}`);
@@ -419,7 +431,8 @@ async function main() {
     results.push(res);
     const tail = res.noSummary
       ? '(基准，看测量值)'
-      : (res.pass === null ? '(没读到收尾行)' : `${res.pass} 通过 / ${res.fail} 失败`);
+      : (res.pass !== null ? `${res.pass} 通过 / ${res.fail} 失败`
+        : (res.recognized ? '通过（这套只印结论、不印计数）' : '(没读到收尾行)'));
     console.log(`${res.ok ? 'OK' : 'FAIL'}  ${tail}${res.note ? `  [${res.note}]` : ''}  ${(res.ms / 1000).toFixed(1)}s`);
     if (!res.ok) {
       // 失败时把最后 25 行贴出来，省得再去翻日志
@@ -433,7 +446,9 @@ async function main() {
   console.log('==============================================');
   let bad = 0, totalPass = 0, totalFail = 0;
   for (const r of results) {
-    const tail = r.noSummary ? '基准' : (r.pass === null ? '无收尾行' : `${r.pass}/${r.fail}`);
+    const tail = r.noSummary ? '基准'
+      : (r.pass !== null ? `${r.pass}/${r.fail}`
+        : (r.recognized ? '通过（无计数）' : '无收尾行'));
     console.log(`  ${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(24)} ${tail}`);
     if (!r.ok) bad++;
     if (r.pass !== null) { totalPass += r.pass; totalFail += r.fail; }

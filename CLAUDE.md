@@ -577,18 +577,26 @@ npm run test:focus-stop-ui   # v4·退出专注的长按进度条（真渲染进
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
-npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页 + 软件选择器 + 视觉层）160
-npm run test:focusmode-e2e   # 专注模式端到端 60
+npm run test:settings-e2e    # 设置窗口（周视图 + 专注页 + 选择器 + 视觉层 + 侧边栏 + 空间一致）181
+npm run test:focusmode-e2e   # 专注模式端到端（含拦截提示的减少动效）63
 npm run test:week-e2e        # 周视图端到端 19
 npm run test:chat-e2e        # 聊天端到端 17
-npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）
-npm run test:sync            # 按钮与桌宠同步（拖拽时按钮不许飘）
-npm run test:glide           # v4·松手惯性 + 橡皮筋（真跑主进程动画）12
+npm run test:reminder-e2e    # 提醒呈现端到端（含气泡的减少动效；⚠ 会真的弹一条系统通知）22
+npm run test:sync            # 按钮与桌宠同步（拖拽时按钮不许飘）10
+npm run test:glide           # v4·松手惯性 + 橡皮筋（真跑主进程动画）13
 npm run test:focus           # 桌宠不抢焦点（⚠ 和专注模式无关，专注模式是 focusmode）20
-npm run test:gaze            # 拖拽时视线跟随开关（回归哨兵）
-npm run test:exit            # 退出按钮（回归哨兵）
+npm run test:gaze            # 拖拽时视线跟随开关（回归哨兵）6
+npm run test:exit            # 退出按钮（回归哨兵；会真的退出）
 npm run build                # 打包（electron-builder）
+
+# 收尾一把梭：纯 Node 全部 + 端到端全部，统一汇总（约 4 分 40 秒）
+npm run test:all             # 35 套 / 1396 断言
+npm run test:changed         # 内循环：只跑跟这次改动有关的套件（秒级）
 ```
+
+⚠️ **各套件收尾格式不统一**（中文「结果：/结束：」、英文「N passed / M failed」、
+以及 `scheduler-e2e` 那种「结束：通过」无计数的），`test:all` 四种都认。
+★ 无计数的那种最容易变成假绿通道 —— 「结束：不通过」必须判红，`--selfcheck` 里有负对照钉它。
 
 ⚠️ **专注模式真正动系统的那几步（弹 UAC / 改真实 hosts / 关软件）沙箱里测不了**，
 必须主人照 `HANDOFF-V3.md` 第三节 3.7 的 10 条清单真机验收。
