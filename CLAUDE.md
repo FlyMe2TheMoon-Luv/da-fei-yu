@@ -292,13 +292,27 @@ desktop-pet/
 45. **四个窗口焦点策略各不相同** —— 桌宠 `false` / 提醒气泡 `false` / **专注提示窗口 `true`** /
     设置窗口 + 聊天条 `true`。提示窗口要主人**看见并点按钮**，所以 `show()`+`focus()`，别照抄气泡的
     `showInactive()`。自检钉了负对照：提示窗口 `true` 且气泡 `false`，两个值必须不一样。
-46. **`catch` 完只返回兜底值 = 把诊断信息丢了** —— 真机踩到：读 hosts 失败时
+46. **常量从模块取，方法从实例取** —— `elevate.js` 的 `HOSTS_PATH` 等常量**只在模块导出上**，
+    `createElevator()` 的返回对象里**没有**。写成 `实例.HOSTS_PATH` 会静默得到 `undefined`
+    （JS 读不存在的属性不报错），一直等到 `fs.readFileSync(undefined)` 才炸成
+    `ERR_INVALID_ARG_TYPE` —— **真机踩到过**（主人一点「开始专注」就报这个）。
+    正确写法：`const elevatorMod = require('./elevate'); const elevator = elevatorMod.createElevator();`
+    然后 **`elevatorMod.HOSTS_PATH` / `elevator.startHelper(...)`**。
+    ★ 守门员：`npm run test:focus-wiring`。
+47. **「默认值」本身也要被检查，尤其当它会被别处覆盖时** —— 上面那个 bug **所有自检都是绿的**，
+    因为沙箱时 `main.js` 用 `init({hostsPath})` 把错值覆盖了，之后每个断言看到的都是正确值。
+    **覆盖之后测再多，都不代表默认值是对的。** 所以 `test:focus-wiring` 会**静态查源码**
+    并用 electron **不调 init** 加载 `index.js`，直接看模块级默认值。
+    ★ 同类：写自检时先想「我这条断言，在当前环境下可能红吗」——
+    不可能红的断言是装饰（第一版 e2e 里「默认路径形如 …\\hosts」就是这种假失败）。
+48. **`catch` 完只返回兜底值 = 把诊断信息丢了** —— 真机踩到：读 hosts 失败时
     `readHostsText` 直接 `catch { return null }`，界面只能说「可能是杀毒软件，也可能权限不够」，
     主人拿着这句话既没法确认、也不知道下一步点哪里。凡是**动系统**的操作，失败时都必须留下
     系统给的原因（错误码 + 原话）并翻成一句**能照做**的人话。
-    ★ 排查这类问题的顺序：① 先证明文件本身能不能读（换 PowerShell / node / 用程序自己的模块各试一遍）
-    ② 排除环境变量残留（`PET_*`）③ 再看杀软（本机是**火绒**，HIPS 会拦小程序的敏感动作）
-    ④ 都不行就把错误码带出来让主人复现。
+    ★ 排查顺序：① 先证明文件本身能不能读（换 PowerShell / node / 用程序自己的模块各试一遍）
+    ② 排除环境变量残留（`PET_*`）③ 再看杀软（本机是**火绒**，HIPS 会拦敏感动作）
+    ④ 都不行就把错误码带出来让主人复现 —— **错误码往往直接指向真相**
+    （这次 `ERR_INVALID_ARG_TYPE` 一眼就把「文件读不到」翻案成「参数是 undefined」）。
     ★ 相关工具：`npm run check:hosts`（只读体检，报能不能读 / 错误码 / 有没有残留标记块）。
 
 ---
@@ -327,11 +341,12 @@ npm run test:focus-hosts     # 专注·hosts 文本 + DoH 99
 npm run test:focus-elevate   # 专注·提权壳 81
 npm run test:focus-helper    # 专注·真跑 focus-helper.ps1（不提权）51
 npm run test:focus-intercept # 专注·系统薄壳 56
+npm run test:focus-wiring    # 专注·接线/默认值（专抓「自检全绿真机挂」）17
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
 npm run test:settings-e2e    # 设置窗口（含周视图 + 专注页）113
-npm run test:focusmode-e2e   # 专注模式端到端 58
+npm run test:focusmode-e2e   # 专注模式端到端 60
 npm run test:week-e2e        # 周视图端到端 19
 npm run test:chat-e2e        # 聊天端到端 17
 npm run test:reminder-e2e    # 提醒呈现端到端（⚠ 会真的弹一条系统通知）

@@ -33,7 +33,15 @@ const { sanitizeBlacklist, killListOf } = require('./blacklist');
 
 // ⚠ 拿到的是**模块**，要 createElevator() 才是能用的实例 ——
 //   require('./elevate') 本身只有工厂和纯函数，没有 startHelper / notifyStop。
-const elevator = require('./elevate').createElevator();
+// ★ 但反过来：**常量（HOSTS_PATH 等）只在模块上，实例上没有**。
+//   这里曾经写成 `const elevator = require('./elevate').createElevator()` 然后用
+//   `elevator.HOSTS_PATH` —— 实例上根本没这个字段，于是 hostsPath 静默变成 undefined，
+//   真机一点「开始专注」就报 ERR_INVALID_ARG_TYPE（fs 收到 undefined 当路径）。
+//   ★ 为什么自检没抓到：沙箱时 main.js 会显式传 hostsPath 把它覆盖掉，
+//     纯 Node 自检又不走这条路径 —— 典型的「自检全绿、真机必挂」。
+//   所以这里分开取：常量从模块拿，实例从工厂拿。
+const elevatorMod = require('./elevate');
+const elevator = elevatorMod.createElevator();
 
 // 每 5 秒查一次「到点了没有」。
 // ⚠ 不用 setTimeout(到点时间) —— 电脑睡一觉 / 关机再开，setTimeout 会把事件丢掉，
@@ -51,7 +59,9 @@ const SANDBOX_HOSTS = '# selftest fake hosts - never touches the real system fil
 // ★ 自检绝不能弹 UAC、绝不能碰主人的真实 hosts，否则自检就变成危险操作了。
 let options = {
   elevate: true,
-  hostsPath: elevator.HOSTS_PATH,
+  // ★ 必须从**模块**取（elevatorMod），不能从实例取 —— 实例上没有这个字段，
+  //   写成 elevator.HOSTS_PATH 会得到 undefined，真机点开始专注即报错。
+  hostsPath: elevatorMod.HOSTS_PATH,
 };
 
 let onChange = null;   // 会话状态变了就喊一声（由 main.js 注入）

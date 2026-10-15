@@ -69,6 +69,24 @@ module.exports = {
     };
 
     try {
+      // ===== ⓪⁻ 真机 bug 回归哨兵：hostsPath 不许是 undefined =====
+      //   教训：`focus/index.js` 曾经写 `elevator.HOSTS_PATH`（从**实例**取常量），
+      //   实例上根本没有这个字段 → hostsPath 静默变成 undefined →
+      //   真机一点「开始专注」就报 ERR_INVALID_ARG_TYPE（fs 收到 undefined 当路径）。
+      //
+      //   ★ 这里只做「不是 undefined」这一条 —— 因为 e2e 跑到这一步时，
+      //     main.js 早就 init() 过、hostsPath 已被换成沙箱假路径了，
+      //     「长得像真正的 hosts 路径」这种断言在沙箱里根本不成立
+      //     （第一版就写了这条，报了个假失败）。
+      //   ★ 真正盯住「真机上默认值对不对」的是 `npm run test:focus-wiring`：
+      //     它在 init 之前、用真机路径跑，还会静态检查源码里没写回错误取法。
+      {
+        const hp = focus.hostsPath();
+        ok(typeof hp === 'string' && hp.length > 0,
+          `★ hostsPath 是有效字符串（实际 ${JSON.stringify(hp)}）`);
+        ok(String(hp) !== 'undefined' && String(hp) !== 'null',
+          '★ hostsPath 不是字符串化后的 undefined / null（真机那个 bug 的特征）', true);      }
+
       // ===== ⓪ 干净起点 =====
       // `--isolated` 已经把 userData 指到临时目录，不会碰主人的真实数据。
       focus.stop('selftest-reset');

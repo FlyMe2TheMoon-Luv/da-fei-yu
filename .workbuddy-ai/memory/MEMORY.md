@@ -16,10 +16,16 @@
   **下一步 Task 10：文档 + 全量回归 + 主人真机验收（10 条清单）**。
   ⚠ Task 6–9 里「动系统」的部分，**代码和自检都完成了，但真机验收还没做**
   （UAC 弹窗、网站真打不开、记事本真被关 —— 这三件事沙箱里验不了，只能主人点）。
-  **2026-10-15：真机验收第 2 步卡在「读不到 hosts」**（详见 `memory/2026-10-15.md`）。
-  实测：hosts 文件本身没问题（PowerShell / node / Electron 都能读，ACL 正常），
-  机器上装了**火绒安全软件**；结论是「代码路径没问题，运行那一刻被外部挡了」。
-  已加诊断（把系统错误码带出来）+ 一键体检 `npm run check:hosts`，等主人回报错误码。
+  **2026-10-15：真机验收第 2 步卡在「读不到 hosts」→ 已定位并修好**（详见 `memory/2026-10-15.md`）。
+  ★ 真凶不是杀软（火绒退出后照样报），是**自己的接线 bug**：
+  `focus/index.js` 写了 `elevator.HOSTS_PATH` —— **`HOSTS_PATH` 只在模块上、实例上没有**，
+  于是 `hostsPath` 静默变成 `undefined`，一点「开始专注」就 `ERR_INVALID_ARG_TYPE`。
+  ★ **为什么全部自检都绿**：沙箱时 `main.js` 用 `init({hostsPath})` 把它覆盖了，
+  那个错值从没被检查过 —— 典型的「自检全绿、真机必挂」。
+  已修（常量从模块取、实例从工厂取），并新增 **`npm run test:focus-wiring`** 专抓这类错
+  （静态查源码 + 真用 electron 加载 index.js 看模块级默认值，**不调 init**）。
+  ★ 教训升级版：**「默认值」本身也要被检查**，尤其当它会被别处覆盖时 ——
+  覆盖之后测再多，都不代表默认值是对的。
 - **阶段 3 专注模式的关键约定**（别改错）：
   - 拦截分两段：**改 hosts 挡网站** + **轮询杀进程挡软件**。整段专注**只弹一次 UAC** ——
     起一个**常驻提权助手**（`src/main/focus-helper.ps1`，**纯 ASCII**），从写 hosts 活到结束。
@@ -45,6 +51,11 @@
     （`killListOf` 第一版负对照就是这种，等于没写）。
   - 提权壳 `src/main/focus/elevate.js`：碰 electron 的依赖**延迟 require**，所以能脱离 Electron 单测；
     实例要 `createElevator()` 拿，**`require` 回来的是模块不是实例**（踩过这个坑）。
+    ★ **反过来也成立、而且更隐蔽**：**常量（`HOSTS_PATH` 等）只在模块上，实例上没有**。
+    写成 `实例.HOSTS_PATH` 会得到 `undefined` 而**不报错**（JS 读不存在的属性合法），
+    一直等到 `fs.readFileSync(undefined)` 才炸成 `ERR_INVALID_ARG_TYPE`（2026-10-15 真机踩到）。
+    所以 index.js 里是 `const elevatorMod = require('./elevate')` + `const elevator = elevatorMod.createElevator()`，
+    **常量走模块、方法走实例**。守门员：`npm run test:focus-wiring`。
   - **不提权也能验拦截**：给助手一份**假 hosts 副本**（临时目录），它只认计划文件里的路径，
     所以 `test:focus-helper` 全程不提权、不碰真实文件就能验完「备份/写入/还原/自愈」。
   - **沙箱里能验完整条链**：有 `--selftest` 环境变量时 `focus.init({elevate:false,
@@ -102,7 +113,8 @@
   `test:quit`（8）/ `test:week`（53）/ `test:nl-time`（23）/ `test:brain-local`（19）/ `test:brain-cloud`（18）/
   `test:brain-router`（19）/ `test:focus-blacklist`（76）/ `test:focus-timer`（34）/ `test:focus-hosts`（99）/
   `test:focus-elevate`（81）/ `test:focus-helper`（51，**真跑 .ps1，不提权**）/ `test:focus-intercept`（56）/
-  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（58）/ `test:reminder-e2e`（19）/
+  **`test:focus-wiring`（17，接线/默认值：静态查源码 + 真加载 index.js，专抓「自检全绿真机挂」）** /
+  **Electron 端到端**：`test:settings-e2e`（113）/ `test:focusmode-e2e`（60）/ `test:reminder-e2e`（19）/
   `test:chat-e2e`（17）/ `test:week-e2e`（19）/ `test:focus`（20，**窗口焦点**自检，别和专注模式搞混）/
   `test:sync`（10）/ `test:gaze`（6）/ `test:exit` / `test:drag` / `test:scheduler-e2e`。
   ⚠ 各套件收尾格式不统一（有的印「结果：」有的印「结束：」），批量统计要用 `grep -E "(结果|结束)："`。
@@ -146,8 +158,15 @@
   - 日程调度用轮询不用 setTimeout。
   - 改 hosts 必须用 BEGIN/END 标记块，绝不整文件覆盖。
   - 提权只在开始专注时弹一次 UAC，不常驻管理员。
+- **「默认值」本身也要被检查，尤其当它会被别处覆盖时** ——
+  2026-10-15 真机踩到：`focus/index.js` 的默认 `hostsPath` 是 `undefined`，
+  但**所有自检都是绿的**，因为沙箱时 `main.js` 会 `init({hostsPath})` 把它覆盖掉，
+  之后每一个断言看到的都是被覆盖后的正确值。**覆盖之后测再多，都不代表默认值是对的。**
+  守门员：`npm run test:focus-wiring`（静态查源码 + 真加载 index.js、**不调 init**）。
 - **改了「谁 require 谁」这类接线，纯函数自检永远是绿的，必须跑端到端** ——
-  Task 6 里 `require('./elevate')` 当成实例用，纯函数自检全绿，是端到端抓到的。
+  Task 6 里 `require('./elevate')` 当成实例用，纯函数自检全绿，是端到端抓到的；
+  2026-10-15 又踩到它的**反面**（从实例取常量 → `undefined`），
+  这次纯函数**和**端到端都抓不到（端到端被 init 覆盖），是新加的 wiring 自检抓到的。
 - **自检崩了也必须打印结论**：整段包 `try/catch`，catch 里 `fail++` 并打印
   「自检自身抛异常」+ 负对照计数 + 结果行。卡死过一次（Task 5），别再来第二次。
 
