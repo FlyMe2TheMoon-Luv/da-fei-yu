@@ -53,6 +53,12 @@
       --danger-050: #fef2f2;
       --danger-line: #fecaca;
 
+      /* ---- 「按住退出」进度条的颜色（v4 批次 2.6⁺）----
+         ★ 单独一个 token，不挂 --danger-500：语义上它是「进度」不是「危险」。
+         用系统蓝（和 --a-500 同族），所以它和界面其它蓝色是一个家族。 */
+      --stop-hold: var(--a-500);
+      --stop-hold-strong: var(--a-600);   /* 提高对比度时用更深的那一档 */
+
       /* ---- 语义别名（旧名沿用，别删）---- */
       --bg: var(--n-2);
       --card: var(--n-0);
@@ -132,6 +138,11 @@
         --warn-line: rgba(255, 216, 138, .34);
         --danger-050: rgba(240, 68, 56, .14);
         --danger-line: rgba(254, 202, 202, .30);
+
+        /* ★ 深色主题下「提高对比度」的填充要**更亮**，不能沿用浅色主题的「更深」——
+           浅色主题里 `--a-600` 比 `--a-500` 深（贴白底更清楚），
+           但深色主题里那样会变成「在一片深色上更深的蓝」，正好反了。 */
+        --stop-hold-strong: #409cff;
 
         --mat-chrome: rgba(28, 31, 38, .70);
         --mat-edge: rgba(255, 255, 255, .08);
@@ -925,7 +936,20 @@
       -webkit-user-select: none;
       touch-action: none; /* 长按时别触发滚动/缩放手势 */
       --hold: 0;
+      /* ★ 底色/边框/文字自己一套（不再借 `.danger`）：
+         常态是「安静的蓝字按钮」，按住时才被蓝底铺满。 */
+      background: var(--n-0);
+      border: 1px solid var(--line);
+      color: var(--stop-hold);
+      box-shadow: var(--sh-1);
+      cursor: pointer;
+      transition: border-color var(--t-fast) var(--ease-out),
+                  background var(--t-fast) var(--ease-out);
     }
+    /* 悬停只把边框点亮一点，**不换背景** ——
+       背景是「按住进度」的专属区域，悬停不该去动它（那是两件事）。 */
+    .focus-stop:hover { border-color: var(--stop-hold); }
+    .focus-stop:active { box-shadow: none; }
     /* 轨道：按住之前就能看出「这里会涨」 */
     .focus-stop::before {
       content: '';
@@ -935,6 +959,11 @@
       background: var(--n-2);
       opacity: .55;
     }
+    /* ★ v4 批次 2.6⁺：填充色改成**蓝色**（主人要求）。
+       用一个专用 token `--stop-hold`，不再直接挂 `--danger-500`：
+         · 语义上这是「进度」，不是「危险」——挂 danger 会让以后想微调这个蓝
+           不小心动到全站的报错色；
+         · 深色主题下同一个蓝可能偏暗，有单独 token 才好按主题调。 */
     .focus-stop-fill {
       position: absolute;
       left: 0;
@@ -944,19 +973,19 @@
       width: 100%;
       transform: scaleX(var(--hold));
       transform-origin: left center;
-      background: var(--danger-500);
+      background: var(--stop-hold);
       /* 涨：跟着手指，线性；退：快，让人感觉「一松就回来了」 */
       transition: transform 160ms var(--ease-out);
     }
-    .focus-stop.holding { border-color: var(--danger-500); }
+    .focus-stop.holding { border-color: var(--stop-hold); }
     /* 按住期间填充跟手，不加过渡（否则会落后于手感） */
     .focus-stop.holding .focus-stop-fill { transition: none; }
     .focus-stop-label { position: relative; z-index: 1; }
-    /* 填充从左边扫过来，文字会有一段压在红底上 —— 加重文字阴影保证任何进度都读得清 */
+    /* 填充从左边扫过来，文字会有一段压在蓝底上 —— 加重文字阴影保证任何进度都读得清 */
     .focus-stop.holding {
       color: #fff;
-      border-color: var(--danger-500);
-      background: var(--danger-500);
+      border-color: var(--stop-hold);
+      background: var(--stop-hold);
     }
     .focus-stop.holding .focus-stop-label {
       color: #fff;
@@ -973,7 +1002,7 @@
     /* 提高对比度：给轨道一个实边，别只剩一层淡底 */
     @media (prefers-contrast: more) {
       .focus-stop::before { opacity: 1; border: 2px solid var(--text); }
-      .focus-stop-fill { background: var(--danger-600); }
+      .focus-stop-fill { background: var(--stop-hold-strong); }
     }
 
     /* ---------- 已安装软件选择器（v4 批次 1） ---------- */
@@ -1518,7 +1547,12 @@
              ⚠ 进度**不是**「还剩多少专注时间」，而是「这个退出动作按到哪了」——
                所以它和上面的圆环各管各的，别合并（会让人以为专注只剩 3 秒）。
              ★ 松手就回退：这是我们故意的「可打断」，不是 bug。 -->
-        <button id="btn-focus-stop" class="danger focus-stop" type="button"
+        <!-- ★ v4 批次 2.6⁺：这里**不再挂 `danger` 这个通用类**。
+             原来它借 danger 的样式（红字红边），改成蓝色进度条以后，
+             danger 的 `:hover` 背景会把「按住时的蓝底」盖掉（同权重、后写的赢），
+             实测按住了按钮还是灰的 —— 只有里层填充是蓝的。
+             现在这颗按钮的底色/边框/文字全由 `.focus-stop*` 自己一套说清，不借别人的。 -->
+        <button id="btn-focus-stop" class="focus-stop" type="button"
                 aria-describedby="focus-stop-hint">
           <span class="focus-stop-fill" id="focus-stop-fill" aria-hidden="true"></span>
           <span class="focus-stop-label" id="focus-stop-label">长按 3 秒结束</span>

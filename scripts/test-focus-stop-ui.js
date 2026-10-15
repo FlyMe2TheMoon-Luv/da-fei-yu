@@ -483,8 +483,115 @@ if (!process.versions.electron) {
         ` → Math.ceil(undefined/1000) = “${oldStyle}”`);
     }
 
-    // ================= 14. 收尾 =================
-    console.log('\n14. 收尾');
+    // ================= 14. ★ 填充色是「蓝色」，不是「红色」（主人要求） =================
+    //   为什么要专门钉一条：
+    //     · 改颜色这件事**没有任何纯逻辑**可以测 —— 它只活在样式表里，
+    //       所以只有「真的把页面渲染出来、真的问一句 computedStyle」才算验证过；
+    //     · 而且这类改动最容易「看着像改了、其实没生效」：比如 token 名打错、
+    //       或者旧规则在后面又覆盖回去（CSS 是后写的赢）。**只有量出来才算数。**
+    //   判定用的是**色相**（HSL 的 hue），不是硬编码一个十六进制：
+    //     写死 `expect('#0071e3')` 的话，以后主人想微调蓝的深浅，自检立刻假红。
+    //     而「是不是蓝」这件事，看色相就够了（蓝在 180°~260° 之间）。
+    console.log('\n14. ★ 填充色是蓝色（不是红色）');
+    {
+      const rgb2hsl = (css) => {
+        const m = String(css).match(/(\d+(?:\.\d+)?)/g);
+        if (!m || m.length < 3) return null;
+        const [r, g, b] = m.slice(0, 3).map(Number).map((v) => v / 255);
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        const l = (mx + mn) / 2;
+        const d = mx - mn;
+        if (d === 0) return { h: 0, s: 0, l };
+        const s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+        let h;
+        if (mx === r) h = ((g - b) / d) % 6;
+        else if (mx === g) h = (b - r) / d + 2;
+        else h = (r - g) / d + 4;
+        h *= 60; if (h < 0) h += 360;
+        return { h, s, l };
+      };
+
+      // ---- 常态下的填充色 ----
+      const normal = await js(`getComputedStyle(document.getElementById('focus-stop-fill')).backgroundColor`);
+      const hsl = rgb2hsl(normal);
+      check(!!hsl, '填充色能被读成 RGB（样式确实作用到了这个元素上）', false, ` → ${normal}`);
+      check(hsl && hsl.h >= 180 && hsl.h <= 260,
+        '★ 填充色是**蓝色**（色相 180°~260°）', false,
+        ` → ${normal} → hue=${hsl ? hsl.h.toFixed(0) : '?'}°`);
+      check(hsl && hsl.s > 0.3, '★ 是「有彩度的蓝」，不是灰色', false,
+        ` → sat=${hsl ? (hsl.s * 100).toFixed(0) : '?'}%`);
+
+      // ---- ★★ 负对照 1：证明「色相判定」真的能红 ----
+      //   主人原话是「把红色改成蓝色」，所以最该抓的错就是**它还红着**。
+      //   这里把上一版的颜色（--danger-500 红）拿来过同一个判定，必须判成「不是蓝」。
+      const redHsl = rgb2hsl('rgb(240, 68, 56)'); // = #f04438，就是原来那个红
+      check(redHsl && !(redHsl.h >= 180 && redHsl.h <= 260),
+        '★ 负对照：原来的红色过不了「是蓝」这条判定（说明上面那条不是装饰）', true,
+        ` → hue=${redHsl.h.toFixed(0)}°（红约 5°，应落在 180°~260° 之外）`);
+
+      // ---- ★ 负对照 2：样式表里已经没有任何一处「用 danger 色画填充」了 ----
+      const fs = require('fs');
+      const css = fs.readFileSync(path.join(root, 'src/renderer/settings/index.html'), 'utf8');
+      // 抓「.focus-stop-fill { … }」这个块（含随后的声明），看里面有没有 danger
+      const fillBlocks = css.match(/\.focus-stop-fill\s*\{[^}]*\}/g) || [];
+      check(fillBlocks.length >= 1, '样式表里找得到 .focus-stop-fill 规则', false,
+        ` → ${fillBlocks.length} 处`);
+      check(!fillBlocks.some((b) => /--danger/.test(b)),
+        '★ 填充的规则里不再直接引用 danger 色（改颜色只该动 --stop-hold）', true);
+      // 而且必须挂着专属 token
+      check(fillBlocks.some((b) => /var\(\s*--stop-hold\s*\)/.test(b)),
+        '★ 填充用的是专属 token --stop-hold（语义是「进度」，不是「危险」）', false);
+
+      // ---- ★ 负对照 3：_.holding_ 状态下按钮本身也是蓝的 ----
+      //   按住时整颗按钮会被填充色「铺满」，所以这一层也必须蓝 —— 只看填充层会漏掉它。
+      //
+      //   ★★ 这条断言**真的抓到过一个 bug**（值得留个记录）：
+      //      按钮上原来还挂着通用的 `.danger` 类，它的 `:hover` 规则权重相同、位置更靠后，
+      //      于是把「按住时的蓝底」盖了回去 —— 按住的按钮其实是**深灰**。
+      //      而这份灰恰好带一点蓝调（hue≈222°），**只判色相的版本照样通过了**。
+      //      教训：判「是不是某个颜色」时，**彩度必须一起判**，
+      //      否则任何「灰里带一点该色相」的坏值都能蒙混过关。
+      //
+      //   ★★ 量法上还踩了一个坑，也记下来：
+      //      按钮身上有 `transition: background var(--t-fast)`（常态灰 → 按住蓝要过渡）。
+      //      如果在**同一个同步 tick**里「加类 + 马上读 computedStyle」，
+      //      读到的是过渡的**起点**（还是灰的）—— 看着像「修不好」，其实只是没等它走完。
+      //      ⇒ 量的对象带过渡时，必须**等过渡结束**再读。
+      //      （这条也解释了为什么单独开个小探针「分两次调用」反而正常：中间自然过了一帧。）
+      await js(`document.getElementById('btn-focus-stop').classList.add('holding')`);
+      await wait(300);   // > --t-fast（110ms），等过渡走完
+      const holdProbe = await js(`(() => {
+        const b = document.getElementById('btn-focus-stop');
+        return { bg: getComputedStyle(b).backgroundColor,
+          dark: matchMedia('(prefers-color-scheme: dark)').matches,
+          contrast: matchMedia('(prefers-contrast: more)').matches, cls: b.className };
+      })()`);
+      await js(`document.getElementById('btn-focus-stop').classList.remove('holding')`);
+      await wait(200);
+      const holdingBg = holdProbe.bg;
+      const hHsl = rgb2hsl(holdingBg);
+      check(hHsl && hHsl.h >= 180 && hHsl.h <= 260 && hHsl.s > 0.3,
+        '★ 按住时按钮本身也是蓝底（不是只把里层填充改了）', false,
+        ` → ${holdingBg} → hue=${hHsl ? hHsl.h.toFixed(0) : '?'}° sat=${hHsl ? (hHsl.s * 100).toFixed(0) : '?'}%（dark=${holdProbe.dark} contrast=${holdProbe.contrast}）`);
+      // ★ 负对照：那个「灰里带蓝」的坏值必须被判红（当时就是这样溜过去的）
+      const greyHsl = rgb2hsl('rgb(28, 31, 38)');
+      check(!(greyHsl.h >= 180 && greyHsl.h <= 260 && greyHsl.s > 0.3),
+        '★ 负对照：深灰（带一点蓝调）过不了「是蓝底」这条判定（彩度卡掉了它）', true,
+        ` → hue=${greyHsl.h.toFixed(0)}° sat=${(greyHsl.s * 100).toFixed(0)}%（色相像蓝，但彩度太低）`);
+
+      // ---- ★ 负对照 4：按钮上不该再借通用的 danger 类 ----
+      //   上面的 bug 根因就是「借了别人的样式」；这条守着它别再回来。
+      const btnCls = await js(`document.getElementById('btn-focus-stop').className`);
+      check(!/\bdanger\b/.test(btnCls),
+        '★ 退出按钮不再挂通用 `danger` 类（自己的样式自己说清，免得再被覆盖）', true,
+        ` → class="${btnCls}"`);
+      const dangerBlocks = css.match(/\.danger(?::hover)?\s*\{[^}]*\}/g) || [];
+      check(dangerBlocks.length >= 1 && dangerBlocks.every((b) => !/--stop-hold/.test(b)),
+        '★ 通用 danger 类没有被塞进进度条的色（两边彻底解耦）', true);
+    }
+
+    // ================= 15. 收尾 =================
+    console.log('\n15. 收尾');
     check(errors.length === 0, '没有意外的渲染进程报错：' + errors.join(';'));
 
     if (process.argv.includes('--screenshots') && fail === 0) {

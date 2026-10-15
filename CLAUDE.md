@@ -383,6 +383,22 @@ desktop-pet/
     `const raw = Number(ms); Number.isFinite(raw) ? raw : 0`，负数夹到 0。
     ★ 自检要钉**负对照**：`fmtClock(undefined/null/NaN/'abc'/-5000)` 全部不许含 `NaN`，
     并且用旧写法算一遍证明「这条断言真的能红」。
+66. **★ 量「带过渡的样式」必须等过渡走完，不能在同一个 tick 里读** —— v4 批次 2.6⁺：
+    把退出按钮的填充从红改蓝后，自检里加了一条「按住时按钮本身也是蓝底」。
+    写法是「加 `.holding` 类 → 立刻 `getComputedStyle` 读背景」——
+    读到的是**过渡的起点**（还是常态的灰），看起来像「改了颜色没生效」，
+    其实只是 `transition: background 110ms` 还没开始走。
+    ★ 教训：**读 computedStyle 前先问一句「这个属性有没有过渡/动画」**。
+    有 → 加完状态要 `await` 一个大于过渡时长的时间再读；
+    或者临时 `transition: none` 再读（但那样就测不到「真实观感」了，优先前者）。
+    ★ 顺带：判某个颜色时**色相和彩度要一起判** ——
+    当时那个灰恰好带一点蓝调（hue≈222°，sat≈15%），只判色相会放过它。
+67. **★ 按钮别借通用类的样式（`.danger` 这种），尤其当你要改它的颜色时** ——
+    同一事故的根因：退出按钮同时挂了 `.danger` 和我自己的 `.focus-stop`，
+    而 `.danger:hover` 也设 `background`。改颜色时两边就开始抢，
+    谁赢取决于权重和书写顺序 —— 这种 bug 极难从截图上看出来。
+    ★ 做法：这颗按钮需要的底色/边框/文字**自己一套写清**，不再挂通用语义类；
+    自检里钉一条「按钮的 class 里不许出现 `danger`」。
 50. **中文过滤规则不能照抄英文那套「词边界」** —— v4 踩到：过滤卸载项时写了
     `(^|[\s\-_])(uninstall|卸载)([\s\-_.]|$)`，英文的 `Uninstall` 能匹配，
     可中文的「卸载微信」「卸载火绒」**一条都匹配不上**（中文没有空格当分隔符）。
@@ -480,7 +496,8 @@ npm run test:focus-intercept # 专注·系统薄壳 56
 npm run test:focus-wiring    # 专注·接线/默认值（专抓「自检全绿真机挂」）17
 npm run test:apps            # v4·已安装软件扫描（解析 lnk / 过滤 / 并发图标）105
 npm run test:picker-ui       # v4·软件选择器（真渲染进程 + 真 preload + 内存 IPC）49
-npm run test:focus-stop-ui   # v4·退出专注的长按进度条（真渲染进程 + 内存 IPC）54
+npm run test:focus-stop-ui   # v4·退出专注的长按进度条（真渲染进程 + 内存 IPC）65
+                             # 含「填充是蓝色不是红色」一节（色相 + 彩度一起判）
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
 
 # Electron 端到端自检（慢，串行跑）
