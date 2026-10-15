@@ -44,6 +44,9 @@
     "test:apps": "node scripts/test-apps.js",
     "test:picker-ui": "node scripts/test-picker-ui.js",
     "test:focus-stop-ui": "node scripts/test-focus-stop-ui.js",
+    "test:changed": "node scripts/test-changed.js",
+    "test:all": "node scripts/test-changed.js --all",
+    "test:changed-check": "node scripts/test-changed.js --selfcheck",
     "check:hosts": "node scripts/check-hosts.js"
   },
   "author": "",

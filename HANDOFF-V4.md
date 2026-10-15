@@ -2,7 +2,8 @@
 
 > **给新对话里的小安：读完这一份就能直接开工，不用主人再解释一遍。**
 >
-> 最后更新：2026-10-15 16:50 · **v4 批次 1 / 2 / 2.5 / 2.6 / 2.6⁺ 全部完成并提交** ·
+> 最后更新：2026-10-15 17:00 · **v4 批次 1 / 2 / 2.5 / 2.6 / 2.6⁺ 全部完成并提交** ·
+> **自检流程已改成分层（内循环只跑受影响的，收尾才全量）—— 见 §3.2** ·
 > **下一步：批次 3（动效 + 侧边栏结构）—— 主人已明确授权开工**
 >
 > **深度参考（需要时再翻，别一上来全读）：**
@@ -33,6 +34,8 @@
 1. 「把退出专注模式做成进度条 按照苹果的设计原则」 → **批次 2.6**（已完成）
 2. 「把推出进度条颜色改为蓝色 然后继续批次3」 → **批次 2.6⁺**（已完成）+ **授权批次 3**
 3. 「做一份 handoff 整理一下所有 artifacts 提高效率」 → **就是这份文件**
+4. 「优化自检流程，已经验证过的功能不用自检」 → **分层自检（§3.2）**：
+   内循环只跑受影响的套件，收尾才全量；映射表 + 安全阀在 `scripts/test-changed.js`
 
 ---
 
@@ -73,7 +76,8 @@
 **硬性要求（每批都适用，别忘）：**
 - 纯逻辑放主进程 / 独立文件，**能脱离 Electron 用纯 Node 单测**。
 - 自检**必须带负对照**，且每条负对照都要能答上「它怎样才能红」。
-- 纯 Node 全套 + Electron 全套**都要跑**，全绿才算完。
+- **分层自检**：写的过程中只跑「这次碰到的东西」对应的套件（`npm run test:changed`，秒级）；
+  **批次收尾 / 提交前必须全量**（`npm run test:all`）。详见 §3.2。
 - 新批次改动**单独一次 commit**。
 - 桌宠窗口加任何 DOM 控件**必须挂 `data-ui`**，否则穿透判定会让它点不到。
 - `.ps1` / `.bat` / `.vbs` **必须纯 ASCII**，连注释都不能有中文。
@@ -93,7 +97,61 @@ PET_OPEN_CHAT=1 npm start -- --no-gpu            # 直接开聊天条
 
 主人自己用：双击桌面「启动桌宠」/「停止桌宠」（由 `npm run make-launcher` 生成）。
 
-### 3.2 纯 Node 自检（快，优先跑这些）
+### 3.2 分层自检（先看这条 —— 已经验过的功能不用重验）
+
+以前每改一行就全量跑，20 多套、其中好几套要真开 Electron，一轮好几分钟。
+现在分两层：**写的时候只跑碰到的，收尾才全量。**
+
+```bash
+# ① 内循环（秒级）：看这次改了什么，只跑受影响的套件
+npm run test:changed
+
+#    先看一眼会跑哪些，不真跑
+npm run test:changed -- --list
+
+#    只跑纯 Node 的（跳过真渲染进程 / 端到端，最快）
+npm run test:changed -- --pure
+
+#    跟某个提交比（默认 HEAD = 未提交的改动）
+npm run test:changed -- --base=4afa448
+
+#    预演：不改 git，直接问「改了这些会跑哪些」
+npm run test:changed -- --list --files=src/main/focus/hosts.js
+
+# ② 批次收尾 / 提交前（必跑）：全量
+npm run test:all
+```
+
+挑选用的是**影响映射表**（写死在 `scripts/test-changed.js` 顶部的 `SUITES`）：
+每个套件声明它「管」哪些源码文件，脚本读 `git diff` 反查出该跑哪几套。
+映射表里没登记的新源码文件**会被点名报出来**，不会静默漏掉。
+
+**三条安全阀（别绕过）：**
+1. 碰到**交叉件**（`src/main/main.js` / `package.json` / `scripts/start-dev.js`）→
+   自动升级为**全量**。这几个被谁 require 太多，挑着跑就是自欺欺人。
+2. 出现**没登记的源码新文件** → 点名 + 建议全量。
+3. 新加套件**记得回映射表登记**，否则它只能被 `test:all` 跑到。
+
+挑选器自己也有自检（纯内存，带 8 条负对照）：
+
+```bash
+npm run test:changed-check     # 17 通过 / 0 失败 · 负对照 8/8
+```
+
+**⚠ 常见改动 → 会跑哪几套（速查）**
+
+| 改了什么 | 会跑 |
+|---|---|
+| `focus/hosts.js` | focus-hosts · focus-helper · focus-intercept · focusmode-e2e |
+| `focus/timer.js` | focus-timer · focus-stop-ui · focusmode-e2e |
+| `focus/blacklist.js` | focus-blacklist · apps · picker-ui · focusmode-e2e |
+| `renderer/settings/index.html` | picker-ui · focus-stop-ui · settings-e2e |
+| `renderer/pet/renderer.js` | sync · gaze · exit · drag |
+| `brain/*` | brain-local / brain-cloud / brain-router · chat-e2e |
+| 只改 `*.md` | 一套都不跑 |
+| `main.js` / `package.json` | **全部** |
+
+### 3.3 单套命令清单（想单独跑某一套时）
 
 ```bash
 # 数据 / 调度层
@@ -124,7 +182,7 @@ npm run test:picker-ui        # 49
 npm run test:focus-stop-ui    # 65（含「填充是蓝色不是红色」一节，负对照 27/27）
 ```
 
-### 3.3 Electron 端到端（慢，改到窗口/接线时必跑）
+### 3.4 Electron 端到端（慢，改到窗口/接线时必跑）
 
 ```bash
 npm run test:settings-e2e     # 160
@@ -140,7 +198,7 @@ npm run test:exit             # 点真退出按钮，会真的退出（正常）
 npm run test:drag             # 性能基准，只印测量值、不印通过数（正常）
 ```
 
-### 3.4 工具
+### 3.5 工具
 
 ```bash
 npm run check:hosts           # hosts 体检：能不能读 / 错误码 / 有没有残留标记块（只读，不提权）
@@ -150,17 +208,20 @@ npm run make-launcher         # 生成桌面双击快捷方式
 npm run sync-vendor           # 同步 Live2D 第三方运行时
 ```
 
-### 3.5 ⚠ 统计全套结果时的坑
+### 3.6 ⚠ 统计全套结果时的坑
 
-**各套件收尾格式不统一**（有的印「结果：」有的印「结束：」），批量统计要用：
+**各套件收尾格式不统一**（有的印「结果：」有的印「结束：」）。
+`npm run test:all` 已经统一收好了（两种都认），**收尾统计直接看它的汇总表就行**，不用自己 grep。
+
+`test:exit` 和 `test:drag` **不会印「N 通过 / M 失败」**：
+- `exit` 会**真的点退出按钮退出**（前半段会印 `前半段结果：9 通过 / 0 失败`）—— 这是设计如此，不是坏。
+- `drag` 是**性能基准**，只印测量值；`test:all` 里它显示为「基准」而不是通过/失败。
+
+真要自己批量 grep 时用：
 
 ```bash
 npm run test:xxx --silent 2>&1 | grep -E "(结果|结束)："
 ```
-
-`test:exit` 和 `test:drag` **不会印「N 通过 / M 失败」**：
-- `exit` 会**真的点退出按钮退出**（前半段会印 `前半段结果：9 通过 / 0 失败`）—— 这是设计如此，不是坏。
-- `drag` 是**性能基准**，只印测量值，最后印「自检结束」。
 
 ---
 
@@ -211,6 +272,7 @@ src/
       vendor/               第三方运行时（sync-vendor 同步）
   assets/            ← 静态图片
 scripts/             ← 开发工具 + 自检（见 §3）
+  test-changed.js          ★ 按改动挑自检（映射表 SUITES + 安全阀 + --selfcheck）
 outputs/             ← 截图产物（v4-*.png）
 launcher/            ← 桌面快捷方式备胎
 ```
@@ -324,6 +386,9 @@ launcher/            ← 桌面快捷方式备胎
 8. **改了「谁 require 谁」这类接线，纯函数自检永远是绿的，必须跑端到端**。
 9. **量带过渡的样式要等过渡走完**（同 tick 读到的是起点）。
 10. **判颜色要色相 + 彩度一起判**。
+11. **「挑着跑」不能替代「收尾全量」** —— 内循环用 `test:changed` 省时间，
+    提交前必须 `test:all`。挑着跑跑绿了只说明「这次碰到的那几块没事」，
+    不代表整体没坏（交叉件已被自动升级为全量，但新登记的映射漏了就得靠全量兜底）。
 
 ---
 
@@ -335,7 +400,8 @@ launcher/            ← 桌面快捷方式备胎
 - [ ] 我读了 `PLAN-V4-UI升级.md` 的批次 3 部分。
 - [ ] 我知道**当前下一步 = 批次 3**，且主人已授权。
 - [ ] 我知道批次做完要**停下来等主人确认**，不能连着做下一批。
-- [ ] 我知道改完要跑**纯 Node 全套 + 相关 Electron 套件**，并**重出截图**。
+- [ ] 我知道改完要跑**相关套件**（内循环 `npm run test:changed`）、
+      收尾要跑**全量**（`npm run test:all`），并**重出截图**。
 - [ ] 我知道新批次改动要**单独 commit**（中文提交信息）。
 - [ ] 我记得：不新增依赖 / 纯逻辑脱离 Electron / `.ps1` 纯 ASCII / 新控件挂 `data-ui`。
 - [ ] `git status --short` 是干净的（或我知道那些改动是什么）。
