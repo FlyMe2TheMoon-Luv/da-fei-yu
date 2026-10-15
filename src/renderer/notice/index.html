@@ -36,6 +36,14 @@
       to   { transform: none; opacity: 1 }
     }
 
+    /* ★ v4 批次 3-c-2：尊重系统的「减少动态效果」。
+       不是「干脆不出现」，而是换个温和的等价物：去掉位移和缩放，保留淡入。
+       （这张卡片是「网站被拦了」的提示，**必须看得见** —— 只是别弹进来。） */
+    @media (prefers-reduced-motion: reduce) {
+      #card { animation: card-fade .12s ease-out; }
+      @keyframes card-fade { from { opacity: 0 } to { opacity: 1 } }
+    }
+
     /* 左边一条竖色条：一眼看出是「提醒」还是「警告」 */
     #card::before {
       content: '';

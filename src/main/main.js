@@ -28,6 +28,7 @@ const brain = require('./brain');
 const aiConfig = require('./ai-config');
 const petDrag = require('./pet-drag');            // v4 批次 3-b：拖拽手感（纯函数）
 const { estimateVelocity } = require('./spring'); // v4 批次 3-b：松手时把手指速度算出来
+const reducedMotionCheck = require('./selftest-reduced-motion'); // v4 批次 3-c-2：减少动效检查
 
 const log = (m) => console.log('[main] ' + m);
 
@@ -251,6 +252,8 @@ function createWindow() {
       // Task 9：拦截提示窗口 + 提醒气泡 —— 自检要拿两者的 focusable 做对照
       focusNotice,
       reminder,
+      // v4 批次 3-c-2：减少动态效果的检查（提示卡也要验一遍）
+      reducedMotionCheck,
     }), 1500);
   }
 
@@ -1745,6 +1748,30 @@ async function runReminderSelfTest() {
   ok(!!(b1.dom && /^\d{2}:\d{2} 到点$/.test(b1.dom.time || '')), '气泡上显示了到点时间',
     ` → “${b1.dom && b1.dom.time}”`);
 
+  // ===== ②b 减少动态效果（v4 批次 3-c-2）=====
+  // 系统开了「减少动态效果」时，气泡**不许再弹进来**（位移 + 缩放），
+  // 但**必须还看得见**（保留淡入）—— 直接不显示等于把提醒也一起删了。
+  // 真模拟系统设置（CDP Emulation.setEmulatedMedia），不是查 CSS 规则在不在。
+  log('②b 减少动态效果：气泡不弹、但还在');
+  {
+    const bubbleWin = reminder.getBubbleWindow();
+    if (!bubbleWin || bubbleWin.isDestroyed()) {
+      ok(false, '拿不到气泡窗口，这条没法验');
+    } else {
+      const rm = await reducedMotionCheck.read(bubbleWin.webContents);
+      log(`   正常：animation=${rm.normal.name} 帧=${rm.normal.frames} 有位移/缩放=${rm.normal.hasTransform}`);
+      log(`   reduce：animation=${rm.reduced.name} 帧=${rm.reduced.frames} 有位移/缩放=${rm.reduced.hasTransform} 有淡入=${rm.reduced.hasOpacity}`);
+      ok(rm.reduced.hasTransform === false,
+        '★ 开了「减少动态效果」→ 关键帧里没有位移/缩放（不再弹进来）');
+      ok(rm.reduced.hasOpacity === true,
+        '★ 但仍然保留淡入（不是「干脆不出现」—— 那等于把提醒删了）');
+      // ★ 负对照：不开的时候必须**有**位移/缩放。不然上面那条「没有」可能是读错了。
+      ok(rm.normal.hasTransform === true,
+        '★ 负对照：系统没开这个设置时，关键帧里**有**位移/缩放（说明这套读法真的分得清）',
+        ` → normal.animation=${rm.normal.name}`);
+    }
+  }
+
   // ===== ③ 气泡位置：贴着桌宠、不越出屏幕 =====
   log('③ 气泡位置');
   const petRect = win.getBounds();
@@ -2023,6 +2050,64 @@ async function runSettingsSelfTest() {
       '★ 侧边栏占掉了一整列，内容区是剩下的宽度（不是浮在上面盖住内容）',
       ` → 窗口 ${nav.innerW} - 侧边栏 ${nav.sidebarW} = ${expectedContent}，内容区实际 ${nav.contentW}`);
     ok(nav.title === '日程', '内容区标题跟着当前页走（现在是「日程」）', ` → “${nav.title}」`);
+  }
+
+  // ===== ①d 空间一致：面板「从触发它的那个东西长出来」（v4 批次 3-c-2）=====
+  // 要验的是 transform-origin 真的对准了触发点，而不是默认的「正中间」。
+  // ★ 量法：拿面板自己的矩形当坐标系，算触发点中心的百分比，跟 computedStyle 里
+  //   的 origin 比。**不能只断言「不是 50% 50%」** —— 那只能证明「有改过」。
+  log('①d 空间一致：表单从「＋ 添加日程」长出来');
+  {
+    const aim = await sw.webContents.executeJavaScript(`(async () => {
+      const btn = document.getElementById('btn-add');
+      const form = document.getElementById('form');
+      btn.click();
+      await new Promise((r) => setTimeout(r, 350));
+      const p = form.getBoundingClientRect();
+      const t = btn.getBoundingClientRect();
+      const wantX = ((t.left + t.width / 2 - p.left) / p.width) * 100;
+      const wantY = ((t.top + t.height / 2 - p.top) / p.height) * 100;
+      const origin = getComputedStyle(form).transformOrigin;   // 形如 "123.4px 56.7px" 或 "%"
+      return {
+        open: !form.classList.contains('hidden'),
+        hasClass: form.classList.contains('is-open'),
+        wantX, wantY, origin,
+        panelW: Math.round(p.width), panelH: Math.round(p.height),
+      };
+    })()`);
+
+    ok(aim.open === true && aim.hasClass === true, '★ 表单开着，而且挂上了动画类 .is-open');
+    // computedStyle 会把百分比换算成 px（相对面板左上角），所以拿 px 比更直接
+    const m = /(-?[\d.]+)px\s+(-?[\d.]+)px/.exec(aim.origin);
+    ok(!!m, 'transform-origin 能读出来', ` → ${aim.origin}`);
+    if (m) {
+      const gotX = parseFloat(m[1]);
+      const gotY = parseFloat(m[2]);
+      const wantX = (aim.wantX / 100) * aim.panelW;
+      const wantY = (aim.wantY / 100) * aim.panelH;
+      ok(Math.abs(gotX - wantX) <= 2 && Math.abs(gotY - wantY) <= 2,
+        '★ origin 精确落在触发按钮的中心上（不是面板正中间）',
+        ` → 实际 ${gotX.toFixed(1)},${gotY.toFixed(1)}px / 期望 ${wantX.toFixed(1)},${wantY.toFixed(1)}px`);
+      // ★ 负对照：这一条证明上面那条「真的在挑位置」——
+      //   如果 origin 恰好就是面板中心，那上面那条等于在测默认值，白测。
+      const cx = aim.panelW / 2;
+      const cy = aim.panelH / 2;
+      ok(Math.abs(wantX - cx) > 5 || Math.abs(wantY - cy) > 5,
+        '★ 负对照：触发点确实不在面板中心（不然「对准触发点」和「用默认值」分不出来）',
+        ` → 触发点 ${wantX.toFixed(1)},${wantY.toFixed(1)}px vs 中心 ${cx},${cy}px`);
+    }
+    // 收尾：关掉表单，别影响后面的步骤
+    await sw.webContents.executeJavaScript(`(async () => {
+      document.getElementById('btn-cancel').click();
+      await new Promise((r) => setTimeout(r, 150));
+      return true;
+    })()`);
+    const closed = await sw.webContents.executeJavaScript(`(() => {
+      const form = document.getElementById('form');
+      return { hidden: form.classList.contains('hidden'), hasClass: form.classList.contains('is-open') };
+    })()`);
+    ok(closed.hidden === true && closed.hasClass === false,
+      '关掉表单后动画类也摘掉了（下次打开才会重新播）');
   }
 
   // 桌宠本该是 screen-saver 层级，会压住设置窗口一块 ——
@@ -2796,6 +2881,18 @@ async function runSettingsSelfTest() {
       r.aria = c0 ? c0.getAttribute('aria-checked') : '';
       r.saveText = (document.getElementById('btn-picker-save') || {}).textContent || '';
       r.saveDisabled = !!(document.getElementById('btn-picker-save') || {}).disabled;
+      // v4 批次 3-c-2：面板要从那颗按钮「长出来」—— origin 必须对准它
+      const p = panel.querySelector('.picker-panel');
+      if (p) {
+        const pr = p.getBoundingClientRect();
+        const br = btn.getBoundingClientRect();
+        r.wantX = ((br.left + br.width / 2 - pr.left) / pr.width) * 100;
+        r.wantY = ((br.top + br.height / 2 - pr.top) / pr.height) * 100;
+        r.origin = getComputedStyle(p).transformOrigin;
+        r.panelW = Math.round(pr.width);
+        r.panelH = Math.round(pr.height);
+        r.isOpenClass = panel.classList.contains('is-open');
+      }
       return r;
     })()`);
 
@@ -2813,6 +2910,22 @@ async function runSettingsSelfTest() {
     //   （这正是「先勾后存」的核心 —— 没有改动就不该能点保存）
     ok(opened.saveDisabled === true, '★ 负对照：刚打开时「保存」是禁用的（没有改动）',
       ` → 文字「${opened.saveText}」disabled=${opened.saveDisabled}`);
+
+    // ★ v4 批次 3-c-2 空间一致：面板必须从「浏览已安装软件」那颗按钮长出来
+    {
+      const m = /(-?[\d.]+)px\s+(-?[\d.]+)px/.exec(opened.origin || '');
+      ok(opened.isOpenClass === true, '★ 面板挂上了动画类 .is-open');
+      ok(!!m, '面板的 transform-origin 能读出来', ` → ${opened.origin}`);
+      if (m) {
+        const gotX = parseFloat(m[1]);
+        const gotY = parseFloat(m[2]);
+        const wantX = (opened.wantX / 100) * opened.panelW;
+        const wantY = (opened.wantY / 100) * opened.panelH;
+        ok(Math.abs(gotX - wantX) <= 2 && Math.abs(gotY - wantY) <= 2,
+          '★ origin 精确落在那颗按钮的中心上（面板从它长出来）',
+          ` → 实际 ${gotX.toFixed(1)},${gotY.toFixed(1)}px / 期望 ${wantX.toFixed(1)},${wantY.toFixed(1)}px`);
+      }
+    }
 
     if (opened.cells > 0) {
       // 搜索过滤：打个不存在的词，网格应该清空（这条同时验「搜索是本地过滤」）

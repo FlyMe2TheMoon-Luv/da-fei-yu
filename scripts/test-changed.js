@@ -70,8 +70,8 @@ const SUITES = {
 
   // —— Electron 端到端 ——
   'test:settings-e2e': { kind: 'e2e', desc: '设置窗口端到端', covers: ['src/main/settings-window.js', 'src/renderer/settings/', 'src/main/preload-settings.js'] },
-  'test:focusmode-e2e': { kind: 'e2e', desc: '专注模式端到端（真走长按路径）', covers: ['src/main/focus/', 'src/main/focus-helper.ps1', 'src/main/focus-notice.js', 'src/renderer/notice/', 'src/main/preload-notice.js', 'src/main/selftest-focusmode.js'] },
-  'test:reminder-e2e': { kind: 'e2e', desc: '提醒气泡端到端', covers: ['src/main/reminder.js', 'src/renderer/bubble/', 'src/main/preload-bubble.js'] },
+  'test:focusmode-e2e': { kind: 'e2e', desc: '专注模式端到端（真走长按路径）', covers: ['src/main/focus/', 'src/main/focus-helper.ps1', 'src/main/focus-notice.js', 'src/renderer/notice/', 'src/main/preload-notice.js', 'src/main/selftest-focusmode.js', 'src/main/selftest-reduced-motion.js'] },
+  'test:reminder-e2e': { kind: 'e2e', desc: '提醒气泡端到端', covers: ['src/main/reminder.js', 'src/renderer/bubble/', 'src/main/preload-bubble.js', 'src/main/selftest-reduced-motion.js'] },
   'test:chat-e2e': { kind: 'e2e', desc: '聊天条端到端', covers: ['src/main/chat-window.js', 'src/renderer/chat/', 'src/main/preload-chat.js', 'src/main/selftest-chat.js', 'src/main/brain/'] },
   'test:week-e2e': { kind: 'e2e', desc: '周视图端到端', covers: ['src/main/week.js', 'src/main/selftest-week.js'] },
   'test:scheduler-e2e': { kind: 'e2e', desc: '调度端到端（要等 30 秒轮询）', covers: ['src/main/scheduler.js'] },

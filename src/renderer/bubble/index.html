@@ -37,6 +37,15 @@
       to   { transform: none; opacity: 1 }
     }
 
+    /* ★ v4 批次 3-c-2：尊重系统的「减少动态效果」。
+       注意这**不是**「干脆不出现」—— 那等于把反馈也一起删了。
+       做法是换个温和的等价物：**去掉位移和缩放，保留淡入**。
+       位移/缩放正是让人晕的那部分；透明度变化帮人理解「这里多了个东西」，不晕。 */
+    @media (prefers-reduced-motion: reduce) {
+      #card { animation: card-fade .12s ease-out; }
+      @keyframes card-fade { from { opacity: 0 } to { opacity: 1 } }
+    }
+
     #head {
       font-size: 11px;
       color: #9ca3af;

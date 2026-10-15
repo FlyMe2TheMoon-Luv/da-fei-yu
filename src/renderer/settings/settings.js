@@ -235,7 +235,7 @@ function buildItem(it) {
   const edit = document.createElement('button');
   edit.className = 'ghost';
   edit.textContent = '改';
-  edit.addEventListener('click', () => openForm(it));
+  edit.addEventListener('click', () => openForm(it, edit));
   const del = document.createElement('button');
   del.className = 'danger';
   del.textContent = '删';
@@ -1035,6 +1035,39 @@ function syncPickerBaseline(data) {
   renderPickerCount();
 }
 
+// ---------- v4 批次 3-c-2：空间一致 ----------
+//
+// 面板要「从触发它的那个东西长出来」，而不是从自己的正中间往外鼓。
+// 做法：把面板的 transform-origin 打到**触发点的相对位置**上。
+//
+// ⚠ 必须**先让面板可见**才量得到它的矩形 —— 所以调用顺序是
+//   「去掉 hidden → aimPanelAt(...) → 下一帧再加 .is-open 起动画」。
+//   动画挂在 .is-open 上（不是直接挂面板），就是为了给这一步留出时间。
+//
+// 取不到触发点（程序化打开、元素已消失）→ 清掉 origin 回到居中，
+// **绝不把 NaN 写进样式**（CLAUDE.md 第 65 条的同一条道理）。
+function aimPanelAt(panel, triggerEl) {
+  if (!panel || !panel.getBoundingClientRect) return;
+  const p = panel.getBoundingClientRect();
+  if (!p.width || !p.height) return;
+  const rect = triggerEl && triggerEl.getBoundingClientRect ? triggerEl.getBoundingClientRect() : null;
+  if (!rect || (!rect.width && !rect.height)) {
+    panel.style.transformOrigin = '';
+    return;
+  }
+  const pct = (n) => (Number.isFinite(n) ? Math.max(-20, Math.min(120, n)) : 50);
+  const ox = ((rect.left + rect.width / 2 - p.left) / p.width) * 100;
+  const oy = ((rect.top + rect.height / 2 - p.top) / p.height) * 100;
+  panel.style.transformOrigin = `${pct(ox).toFixed(1)}% ${pct(oy).toFixed(1)}%`;
+}
+
+// 下一帧再加类，保证 origin 已经生效、动画从正确的点扩开
+function popIn(panel, openClass) {
+  if (!panel) return;
+  panel.classList.remove(openClass);
+  requestAnimationFrame(() => panel.classList.add(openClass));
+}
+
 async function openAppPicker() {
   if (!el.appPicker.classList.contains('hidden')) return;
   const epoch = ++pickerEpoch;
@@ -1043,6 +1076,9 @@ async function openAppPicker() {
     .filter((node) => node !== el.appPicker).map((node) => [node, node.inert]));
   for (const node of pickerInert.keys()) node.inert = true;
   el.appPicker.classList.remove('hidden');
+  // 面板从「🔍 浏览已安装软件」那颗按钮长出来
+  aimPanelAt(el.appPicker.querySelector('.picker-panel'), el.btnBrowseApps);
+  popIn(el.appPicker, 'is-open');
   el.pickerSearch.value = '';
   pickerFilter = '';
   pickerPicked.clear();
@@ -1104,6 +1140,7 @@ function closeAppPicker() {
   pickerPicked.clear();
   pickerUnpicked.clear();
   el.appPicker.classList.add('hidden');
+  el.appPicker.classList.remove('is-open'); // 收起时把动画类摘掉，下次打开才能重放
   for (const [node, wasInert] of pickerInert) node.inert = wasInert;
   pickerInert.clear();
   if (pickerReturnFocus && pickerReturnFocus.isConnected) pickerReturnFocus.focus();
@@ -1225,7 +1262,9 @@ function syncKindRows() {
   el.rowEndTime.classList.toggle('hidden', el.kind.value !== 'span');
 }
 
-function openForm(it) {
+// triggerEl：谁把表单叫出来的（「＋ 添加日程」那颗按钮 / 列表里的「改」/ 周视图的方块）。
+// 传进来的话表单就从那个点展开；传不到就居中（见 aimPanelAt）。
+function openForm(it, triggerEl) {
   resetPendingDelete();
   editingId = it ? it.id : null;
 
@@ -1248,6 +1287,8 @@ function openForm(it) {
   syncKindRows();
   hideFormError();
   el.form.classList.remove('hidden');
+  aimPanelAt(el.form, triggerEl);   // 先量位置定 origin，再起动画（顺序不能反）
+  popIn(el.form, 'is-open');
   el.title.focus();
 }
 
@@ -1255,6 +1296,7 @@ function closeForm() {
   editingId = null;
   hideFormError();
   el.form.classList.add('hidden');
+  el.form.classList.remove('is-open'); // 摘掉动画类，下次打开才能重放
 }
 
 async function onSave() {
@@ -1300,7 +1342,7 @@ for (const [value, label] of WEEKDAYS) {
   el.wdList.appendChild(box);
 }
 
-el.btnAdd.addEventListener('click', () => openForm(null));
+el.btnAdd.addEventListener('click', () => openForm(null, el.btnAdd));
 el.btnCancel.addEventListener('click', closeForm);
 el.btnSave.addEventListener('click', onSave);
 el.repeat.addEventListener('change', syncRepeatRows);

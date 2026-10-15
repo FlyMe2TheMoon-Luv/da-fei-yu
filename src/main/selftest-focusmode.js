@@ -28,7 +28,7 @@ const hosts = require('./focus/hosts');
 
 module.exports = {
   async run(ctx) {
-    const { win: petWin, log, finish, sleep, settingsWindow, focus, focusNotice, reminder } = ctx;
+    const { win: petWin, log, finish, sleep, settingsWindow, focus, focusNotice, reminder, reducedMotionCheck } = ctx;
     log('===== 专注模式自检开始（阶段 3 · Task 5 · 地基版）=====');
 
     let pass = 0;
@@ -385,6 +385,27 @@ module.exports = {
         ok(!!dn.dom && dn.dom.warn === true, '★ kind=warn → 卡片是警示配色');
         ok(!!dn.dom && dn.dom.secondaryShown === true,
           '★ 两个按钮都在（secondaryLabel 非空时必须显示）');
+
+        // ---- v4 批次 3-c-2：减少动态效果 ----
+        // 这张卡片是「网站被拦了」的提示，**必须看得见** —— 只是别弹进来。
+        // 真模拟系统设置（CDP Emulation.setEmulatedMedia），不是查 CSS 规则在不在。
+        log('  ⑧b 减少动态效果：提示卡不弹、但还在');
+        {
+          const nw = focusNotice.getNoticeWindow();
+          if (!nw || nw.isDestroyed()) {
+            ok(false, '拿不到提示窗口，这条没法验');
+          } else {
+            const rm = await reducedMotionCheck.read(nw.webContents);
+            log(`     reduce：animation=${rm.reduced.name} 帧=${rm.reduced.frames} 有位移/缩放=${rm.reduced.hasTransform} 有淡入=${rm.reduced.hasOpacity}`);
+            ok(rm.reduced.hasTransform === false,
+              '★ 开了「减少动态效果」→ 关键帧里没有位移/缩放（不再弹进来）');
+            ok(rm.reduced.hasOpacity === true,
+              '★ 但仍然保留淡入（这张卡是拦截提示，不能干脆不显示）');
+            ok(rm.normal.hasTransform === true,
+              '★ 负对照：系统没开时关键帧里**有**位移/缩放（说明这套读法分得清）',
+              ` → normal.animation=${rm.normal.name}`);
+          }
+        }
 
         // ---- ★ 负对照：气泡窗口的 focusable 必须是 false，且和提示窗口不同 ----
         // 气泡只在桌宠露脸时才冒出来（它贴在桌宠旁边），所以先确认桌宠是可见的。

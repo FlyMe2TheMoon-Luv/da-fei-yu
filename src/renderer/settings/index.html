@@ -1071,12 +1071,22 @@
     #app-picker.hidden { display: none; }
 
     /* 弹入动画：面板「长出来」。
-       ⚠ 这里还是 CSS keyframes —— 真正「可打断 + 从触发按钮长出来」的弹簧留到批次 3。
-         批次 3 会把它换成手写 rAF 弹簧（keyframes 没法中途抓住反向）。
-         现在只求「不突兀」：180ms、无回弹、收尾有轻微减速。 */
+       ★ v4 批次 3-c-2：动画从 `.picker-panel` 挪到 `#app-picker.is-open` 上。
+         为什么：要「从触发它的按钮长出来」，就得先量出那个按钮在面板里的相对位置、
+         再把 transform-origin 打上去 —— 而**必须先显示出来才量得到**。
+         所以流程是「显示容器 → 量位置、定 origin → 下一帧再加 .is-open 起动画」。
+         直接挂在 .picker-panel 上的话，元素一显示动画就跑了，origin 永远慢一帧。 */
     .picker-panel {
       width: 100%;
       max-width: 560px;
+      /* ★ v4 批次 3-c-2：高度**固定**，不跟着内容长。
+         两个理由：
+         ① 面板一打开是空的、1 秒后才填满图标 —— 让它跟着长，会先看到一个小面板
+            再「跳」成大面板（难看的抖动）。
+         ② transform-origin 是打开那一刻按面板矩形算出来的。面板矩形一变，
+            那个 origin 就不再指向触发按钮了 —— 等于「空间一致」白做。
+         固定高度之后，打开时和填满后是同一个框，origin 一直准。 */
+      height: min(100%, 560px);
       max-height: 100%;
       display: flex;
       flex-direction: column;
@@ -1085,11 +1095,20 @@
       border-radius: var(--r-xl);
       box-shadow: var(--sh-4);
       overflow: hidden;
-      animation: picker-pop var(--t-base) var(--ease-out);
+      /* transform-origin 由 JS 按触发点写（见 aimPanelAt），这里不写死 */
     }
+    #app-picker.is-open .picker-panel { animation: picker-pop var(--t-base) var(--ease-out); }
     @keyframes picker-pop {
-      from { opacity: 0; transform: scale(.965) translateY(8px); }
-      to   { opacity: 1; transform: scale(1) translateY(0); }
+      from { opacity: 0; transform: scale(.965); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    /* 表单也是「长出来」的：它的触发点是上面那颗「＋ 添加日程」（或周视图里点的方块），
+       origin 由 JS 打上去，所以看起来是从按钮往下展开，而不是从表单正中间鼓出来。 */
+    #form.is-open { animation: form-pop var(--t-base) var(--ease-out); }
+    @keyframes form-pop {
+      from { opacity: 0; transform: scale(.985); }
+      to   { opacity: 1; transform: scale(1); }
     }
 
     .picker-head {
@@ -1376,7 +1395,9 @@
         transition-duration: .01ms !important;
       }
       /* 位移和缩放一律取消；保留颜色/透明度变化（那些帮人理解，不晕） */
-      .picker-panel { animation: none; }
+      .picker-panel,
+      #app-picker.is-open .picker-panel,
+      #form.is-open { animation: none; }
       button:active,
       button.pressing,
       .app-cell:active,
