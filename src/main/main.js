@@ -2339,11 +2339,11 @@ async function runSettingsSelfTest() {
     ` → “${addBadExe.errorText}”`);
   ok(focus.state().exes.length === 0, '★ 主进程那边也没存进去');
 
-  log('⑧b⁴ᐩ 软件选择器（v4 批次 1）：打开面板 → 点图标 → 加进黑名单');
+  log('⑧b⁴ᐩ 软件选择器（v4 批次 2.5）：点一下勾选 → 再点取消 → 保存才生效');
   {
     // 面板的数据来自主进程扫开始菜单。这条链子在自检环境里跑的是**真开始菜单**
     // （沙箱只隔离了 userData，没有隔离开始菜单），所以断言要写得稳一点：
-    // 不写死「必须有 41 个」，而是「面板能打开、能列出东西、点一个能加进去」。
+    // 不写死「必须有 41 个」，而是「面板能打开、能列出东西、勾选/取消/保存都对」。
     const opened = await sw.webContents.executeJavaScript(`(async () => {
       const panel = document.getElementById('app-picker');
       const btn = document.getElementById('btn-browse-apps');
@@ -2357,8 +2357,13 @@ async function runSettingsSelfTest() {
       r.countText = document.getElementById('picker-count').textContent.trim();
       r.firstExe = document.querySelector('#picker-grid .app-cell')?.dataset.exe || '';
       r.firstName = document.querySelector('#picker-grid .app-cell')?.dataset.name || '';
-      // 有没有「已加入」标记，用来验证 added 状态确实传下来了
       r.addedCells = document.querySelectorAll('#picker-grid .app-cell.added').length;
+      // 无障碍语义：每格必须是 checkbox 且带 aria-checked
+      const c0 = document.querySelector('#picker-grid .app-cell');
+      r.role = c0 ? c0.getAttribute('role') : '';
+      r.aria = c0 ? c0.getAttribute('aria-checked') : '';
+      r.saveText = (document.getElementById('btn-picker-save') || {}).textContent || '';
+      r.saveDisabled = !!(document.getElementById('btn-picker-save') || {}).disabled;
       return r;
     })()`);
 
@@ -2367,6 +2372,15 @@ async function runSettingsSelfTest() {
     ok(opened.hiddenAfter === false, '★ 点按钮后面板打开了');
     ok(opened.cells > 0, '★ 面板里列出了软件（真开始菜单扫出来的）',
       ` → ${opened.cells} 个 · ${opened.countText}`);
+    // ★ 批次 2.5：语义必须是「复选框」而不是「按钮」——
+    //   否则屏幕阅读器念不出「已选中/未选中」这个状态
+    ok(opened.role === 'checkbox', '★ 每格是 role=checkbox（不是普通按钮）', ` → role=${opened.role}`);
+    ok(opened.aria === 'false' || opened.aria === 'true', '★ 每格带 aria-checked 状态',
+      ` → aria-checked=${opened.aria}`);
+    // ★ 负对照：刚打开、什么都没勾，保存按钮必须是**禁用的**
+    //   （这正是「先勾后存」的核心 —— 没有改动就不该能点保存）
+    ok(opened.saveDisabled === true, '★ 负对照：刚打开时「保存」是禁用的（没有改动）',
+      ` → 文字「${opened.saveText}」disabled=${opened.saveDisabled}`);
 
     if (opened.cells > 0) {
       // 搜索过滤：打个不存在的词，网格应该清空（这条同时验「搜索是本地过滤」）
@@ -2386,41 +2400,101 @@ async function runSettingsSelfTest() {
       ok(searched.emptyShown === true, '★ 并且给出了「没找到」的提示（不是一片空白）');
       ok(searched.restored === opened.cells, '★ 清空搜索框 → 列表恢复（过滤是可逆的）');
 
-      // ★ 真正点一个图标 → 必须进黑名单。挑一个「不在保护名单、还没有 exe 冲突」的。
+      // ===== 核心：勾选 → 不保存 → 再点取消 → 保存 =====
+      const before = focus.state().exes.slice();
       const picked = await sw.webContents.executeJavaScript(`(async () => {
         const cell = [...document.querySelectorAll('#picker-grid .app-cell')]
-          .find((c) => !c.classList.contains('added'));
+          .find((c) => !c.classList.contains('added') && c.dataset.exe);
         if (!cell) return { none: true };
         const name = cell.dataset.name, exe = cell.dataset.exe;
+
+        // ① 点一下 = 只勾选（本地草稿），不发 IPC
         cell.click();
+        await new Promise((r) => setTimeout(r, 120));
+        const afterFirst = {
+          mainExes: (await window.settingsAPI.focusGet()).exes,
+          sameNode: cell === [...document.querySelectorAll('.app-cell')].find((c) => c.dataset.exe === exe),
+          picked: cell.classList.contains('picked'),
+          aria: cell.getAttribute('aria-checked'),
+          count: document.getElementById('picker-count').textContent.trim(),
+          saveDisabled: !!document.getElementById('btn-picker-save').disabled,
+        };
+
+        // ② 再点一下 = 取消勾选
+        cell.click();
+        await new Promise((r) => setTimeout(r, 120));
+        const afterSecond = {
+          picked: cell.classList.contains('picked'),
+          aria: cell.getAttribute('aria-checked'),
+          saveDisabled: !!document.getElementById('btn-picker-save').disabled,
+        };
+
+        // ③ 再勾回来，然后保存
+        cell.click();
+        await new Promise((r) => setTimeout(r, 120));
+        document.getElementById('btn-picker-save').click();
         await new Promise((r) => setTimeout(r, 600));
-        // ⚠ 点完整个网格会**重画**（renderPickerGrid），手里那个 cell 节点已经脱离文档了。
-        //   所以「有没有变成已加入」必须**按 exe 重新查一遍**，不能看旧的引用。
-        const fresh = document.querySelector('#picker-grid .app-cell.added')
-          || [...document.querySelectorAll('#picker-grid .app-cell')].find((c) => c.dataset.exe === exe);
+
+        // ⚠ 保存后网格会重画 → 旧节点失效，必须按 exe 重新查
+        const fresh = [...document.querySelectorAll('#picker-grid .app-cell')]
+          .find((c) => c.dataset.exe === exe);
         return {
-          name, exe,
+          name, exe, afterFirst, afterSecond,
           listVals: [...document.querySelectorAll('#focus-exes .focus-val')].map((x) => x.textContent),
-          cellNowAdded: !!(fresh && fresh.classList.contains('added')),
+          cellAdded: !!(fresh && fresh.classList.contains('added')),
+          cellPicked: !!(fresh && fresh.classList.contains('picked')),
+          saveDisabledAfter: !!document.getElementById('btn-picker-save').disabled,
         };
       })()`);
 
       if (picked.none) {
-        ok(false, '★ 面板里一个「还没加过」的软件都没有，没法验证点击添加');
+        ok(false, '★ 面板里一个「还没加过」的软件都没有，没法验证勾选');
       } else if (picked.exe) {
-        ok(picked.listVals.includes(picked.exe), '★ 点图标后，它出现在黑名单列表里',
-          ` → 点了「${picked.name}」→ ${picked.exe}`);
-        ok(focus.state().exes.includes(picked.exe), '★ 主进程那边也真的存进去了');
-        ok(picked.cellNowAdded === true, '★ 那一格当场变成「已加入」（不会让人以为没生效）');
+        // ★★ 最重要的负对照：点了但**没保存**之前，主进程名单一个字节都不能变
+        ok(JSON.stringify(picked.afterFirst.mainExes) === JSON.stringify(before),
+          '负对照：在保存之前取主进程快照，勾选不写名单',
+          ` → ${JSON.stringify(before)} vs ${JSON.stringify(picked.afterFirst.mainExes)}`);
+        ok(picked.afterFirst.sameNode, '勾选不重建格子，保留焦点和悬停');
 
-        // 收尾：把这个软件从名单里去掉，别影响后面的用例
-        focus.setBlacklist({ domains: focus.state().domains, exes: [] });
-        await sw.webContents.executeJavaScript(
-          `(async () => { await window.settingsAPI.focusGet(); })()`
-        ).catch(() => { });
-      } else {
-        // 解析不出 exe 的软件点了会弹 confirm，自检里不该碰 —— 跳过并记一笔
-        ok(true, '（面板里第一个未加入的软件解析不出 exe，点击路径改由纯函数自检覆盖）');
+        ok(picked.afterFirst.picked === true, '★ 点一下 → 那一格变成「已选中」',
+          ` → 计数「${picked.afterFirst.count}」`);
+        ok(picked.afterFirst.aria === 'true', '★ 无障碍状态也跟着变（aria-checked=true）');
+        ok(picked.afterFirst.saveDisabled === false, '★ 有改动后「保存」才可点');
+        ok(picked.afterSecond.picked === false, '★★ 再点一下 → 取消选中（主人要的「再点一下撤销」）');
+        ok(picked.afterSecond.aria === 'false', '★ 取消后 aria-checked 回到 false');
+        ok(picked.afterSecond.saveDisabled === true, '★ 取消回原状后「保存」又变回禁用');
+
+        ok(picked.listVals.includes(picked.exe), '★ 点「保存」后，它出现在黑名单列表里',
+          ` → 勾了「${picked.name}」→ ${picked.exe}`);
+        ok(focus.state().exes.includes(picked.exe), '★ 主进程那边真的存进去了（保存才生效）');
+        ok(picked.cellAdded === true, '★ 保存后那一格变成「已在名单里」');
+        ok(picked.cellPicked === true, '★ 而且它默认是勾上的（看到的 = 当前生效的）');
+        ok(picked.saveDisabledAfter === true, '★ 保存完「保存」回到禁用（改动已清零）');
+
+        // ===== 已挡的软件：点一下能取消勾选 → 保存 → 真的从名单移除 =====
+        const removed = await sw.webContents.executeJavaScript(`(async () => {
+          const cell = [...document.querySelectorAll('#picker-grid .app-cell')]
+            .find((c) => c.dataset.exe === ${JSON.stringify(picked.exe)});
+          if (!cell) return { missing: true };
+          cell.click();   // 取消勾选
+          await new Promise((r) => setTimeout(r, 120));
+          const willRemove = cell.classList.contains('will-remove');
+          const count = document.getElementById('picker-count').textContent.trim();
+          document.getElementById('btn-picker-save').click();
+          await new Promise((r) => setTimeout(r, 600));
+          const fresh = [...document.querySelectorAll('#picker-grid .app-cell')]
+            .find((c) => c.dataset.exe === ${JSON.stringify(picked.exe)});
+          return {
+            willRemove, count,
+            addedAfter: !!(fresh && fresh.classList.contains('added')),
+            listVals: [...document.querySelectorAll('#focus-exes .focus-val')].map((x) => x.textContent),
+          };
+        })()`);
+        ok(removed.missing !== true, '（已挡的软件还能在网格里找到）');
+        ok(removed.willRemove === true, '★ 对已挡的软件点一下 → 标成「保存后会放开」', ` → 计数「${removed.count}」`);
+        ok(!removed.listVals.includes(picked.exe), '★★ 保存后它从黑名单里**真的移除了**（撤销是有效的）');
+        ok(focus.state().exes.includes(picked.exe) === false, '★ 主进程那边也移除了');
+        ok(removed.addedAfter === false, '★ 那一格不再是「已在名单里」');
       }
     }
 

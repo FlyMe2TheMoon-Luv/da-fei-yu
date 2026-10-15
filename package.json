@@ -42,6 +42,7 @@
     "test:focus-intercept": "node scripts/test-focus-intercept.js",
     "test:focus-wiring": "node scripts/test-focus-wiring.js",
     "test:apps": "node scripts/test-apps.js",
+    "test:picker-ui": "node scripts/test-picker-ui.js",
     "check:hosts": "node scripts/check-hosts.js"
   },
   "author": "",

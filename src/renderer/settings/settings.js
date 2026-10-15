@@ -56,7 +56,9 @@ const el = {
   pickerEmpty: document.getElementById('picker-empty'),
   pickerCount: document.getElementById('picker-count'),
   pickerHint: document.getElementById('picker-hint'),
+  pickerLock: document.getElementById('picker-lock'),
   btnPickerRescan: document.getElementById('btn-picker-rescan'),
+  btnPickerSave: document.getElementById('btn-picker-save'),
   focusError: document.getElementById('focus-error'),
   focusDoh: document.getElementById('focus-doh'),
   focusPresets: document.getElementById('focus-presets'),
@@ -91,10 +93,19 @@ let countdownTimer = null; // 专注中每秒刷新倒计时的定时器
 let holdTimer = null;      // 「长按结束」的计时器
 let holdStart = null;      // 「长按结束」按下那一刻
 
-// ---- 软件选择器（v4 批次 1）----
+// ---- 软件选择器（v4 批次 1；批次 2.5 改「先勾后存」）----
 let installedApps = null;  // 最近一次从主进程拿到的「已安装软件」列表（null = 还没扫）
-let appsLoading = false;   // 正在扫（防连点两次按钮）
+let appsLoading = false;
+let appsLoadPromise = null; // 关掉又打开时仍等待同一趟扫描，不返回半成品。
 let pickerFilter = '';     // 搜索框里的关键词
+let pickerPicked = new Set();   // 本次**新勾上**的 exe（还没保存）
+let pickerUnpicked = new Set(); // 本次**取消勾选**的 exe（原来挡着的，还没保存）
+let pickerLocked = false;
+let pickerSaving = false;
+let pickerOpening = false;
+let pickerEpoch = 0; // 关闭后，旧的异步响应不能抢回焦点。
+let pickerReturnFocus = null;
+let pickerInert = new Map();
 
 // 每小时的像素高度。方块的位置和高度都由这个值乘出来 ——
 // 比例是主进程算的（week.js），像素才是界面的事。
@@ -102,26 +113,8 @@ const HOUR_H = 40;
 
 // ---------- 小工具 ----------
 
-// ★ 「按下就响应」（apple-design 第 1 节）。
-//   浏览器默认的按压反馈要等 `click`（= 松手那一刻）才触发 —— 慢半拍，感觉像死的。
-//   这里在 `pointerdown` 上先把 `:active` 的样式**手动加上**，松手/移开再摘掉，
-//   于是「手指按下去的一瞬间」就有反馈，而不是等整个点击动作做完。
-//
-// ⚠ 两条容易踩的：
-//   · 用 `:active` 的视觉效果但**不改行为** —— 真正的动作仍然走 `click`，
-//     这样「按下后拖走取消」「键盘 Enter 触发」这些原生行为一个都没丢。
-//   · `pointerdown` 之后如果指针移出元素，得靠 `pointerleave` 把状态清掉，
-//     否则按钮会「一直按着」。
-function pressFeedback(el) {
-  if (!el || typeof el.addEventListener !== 'function') return;
-  const on = () => el.classList.add('pressing');
-  const off = () => el.classList.remove('pressing');
-  el.addEventListener('pointerdown', on);
-  el.addEventListener('pointerup', off);
-  el.addEventListener('pointerleave', off);
-  el.addEventListener('pointercancel', off);
-  el.addEventListener('blur', off);
-}
+// 原生 :active 本来就在按下时生效；pressing 只补统一的指针取消/失焦清理。
+// 视觉反馈在按下时发生，业务动作仍由 click 提交。
 
 // 给一个容器里所有（含以后动态加进来的）按钮都挂上按下反馈。
 // 用事件委托：`pointerdown` 会冒泡，所以一次性挂在 document 上最省事，
@@ -158,6 +151,12 @@ function todayKey() {
 // 底部飘一条提示，2.4 秒后自己消失（比 alert 温和，也不打断操作）
 let toastTimer = null;
 function toast(msg) {
+  // The picker is a modal with a scrim; a document-level toast would float over its footer.
+  // Route picker toasts into the panel's own status line instead.
+  if (el.appPicker && !el.appPicker.classList.contains('hidden') && el.pickerLock) {
+    pickerMessage(msg);
+    return;
+  }
   let box = document.getElementById('toast');
   if (!box) {
     box = document.createElement('div');
@@ -511,6 +510,9 @@ function renderFocus(data) {
   renderFocusLists();
   renderFocusPresets();
   renderFocusRun();
+  if (!el.appPicker.classList.contains('hidden') && !pickerOpening && !pickerSaving) {
+    syncPickerBaseline(data);
+  }
 }
 
 async function loadFocus() {
@@ -604,7 +606,7 @@ async function addFocusItem(kind) {
   draftDomains = res.domains.slice();
   draftExes = res.exes.slice();
   renderFocusLists();
-  toast('已加入名单');
+  toast('已加入名单'); // 面板开着时会被路由到面板内，不会压住底栏
 }
 
 async function removeFocusItem(kind, value) {
@@ -716,14 +718,29 @@ function endHold(completed) {
   if (completed) el.focusStopHint.textContent = '';
 }
 
-// ---------- 已安装软件选择器（v4 批次 1）----------
+// ---------- 已安装软件选择器（v4 批次 1 / 批次 2.5 改「先勾后存」）----------
 //
 // 主人不用再记 `steam.exe` 怎么拼了 —— 打开面板，点图标就能加。
 //
 // ⚠ 这个面板**自己能做的事很少**：
 //   「你电脑上装了哪些软件」「哪些已经加过」「哪些拦不住」——
-//   全部是主进程扫出来、算好之后送过来的。这里只负责画 + 把点击递上去。
+//   全部是主进程扫出来、算好之后送过来的。这里只负责画 + 把勾选递上去。
 //   一旦这里自己判「哪些软件该出现」，就会和主进程的过滤规则长歪。
+//
+// ★ 批次 2.5 把交互模型换成了「**先勾选、再保存**」（主人要求）：
+//   · 点一下图标 = 只改**本地草稿** `pickerPicked`，**一个 IPC 都不发**
+//   · 再点一下 = 取消勾选
+//   · 底部「保存」才真正写进主进程（一次提交，不是点一下存一次）
+//
+//   为什么非要改成这样（不是审美，是隐患）：
+//     ① 专注**进行中**不许改黑名单。原来是「点一个存一个」，
+//        主人在专注中点一圈会**挨个弹错**，一路踩坑；现在能一进来就禁用保存并说明原因。
+//     ② 原来是「点一下就生效」，**没有撤销**。苹果设计原则里 Agency 明确要求
+//        「给容易的挽回」，勾选模型天然自带撤销（再点一下就行）。
+//     ③ 勾选语义天然就是 checkbox —— 顺手把无障碍也做对了（见 buildAppCell）。
+//
+//   ⚠ `pickerPicked` 里存的是**exe 名**（不是下标/名字）：
+//     因为搜索过滤会让网格重画，用索引会串位；exe 名是稳定的身份。
 
 // 按名字给兜底色块挑一个稳定的颜色。
 // ★ 同一个软件每次打开都该是同一个色（和桌宠那套周视图取色同思路）。
@@ -738,13 +755,24 @@ function swatchFor(name) {
 }
 
 // 一个软件格子：图标（提不到就画首字母）+ 名字 + 可选的小标记
+//
+// ★ 用 `role="checkbox"` + `aria-checked`：
+//   「勾选/取消」在语义上**就是**一个复选框。用 button 的话屏幕阅读器只会念
+//   「按钮」，念不出「已选中」这个**状态** —— 状态恰恰是这里最重要的信息。
+//   保留 `<button>` 元素本身（键盘行为天然正确），只加 ARIA 语义。
 function buildAppCell(app) {
   const cell = document.createElement('button');
   cell.type = 'button';
-  cell.className = 'app-cell' + (app.added ? ' added' : '');
+  const picked = pickedHas(app);
+  cell.className = 'app-cell' + (picked ? ' picked' : '') + (app.added ? ' added' : '')
+    + (app.added && !picked ? ' will-remove' : '');
+  cell.setAttribute('aria-disabled', String(!app.exe || !!app.blocked || pickerLocked || pickerSaving));
   cell.dataset.exe = app.exe || '';
   cell.dataset.name = app.name || '';
-  if (app.added) cell.title = '已经在名单里了';
+  cell.setAttribute('role', 'checkbox');
+  cell.setAttribute('aria-checked', picked ? 'true' : 'false');
+  cell.setAttribute('aria-label', app.name || '(无名)');
+  if (app.added) cell.title = '已经在名单里了；点一下可以取消';
 
   const icon = document.createElement('div');
   icon.className = 'app-icon';
@@ -760,6 +788,9 @@ function buildAppCell(app) {
     icon.style.background = swatchFor(app.name);
     icon.textContent = (String(app.name || '?').trim()[0] || '?').toUpperCase();
   }
+
+  // 勾选徽标：由 CSS 画（`::after`），这里只负责给一个「容器」语义。
+  //   ⚠ 不用文字打勾：那会和 `.app-name` 的 `✓` 撞车，而且旋转/缩放做不圆滑。
 
   const name = document.createElement('span');
   name.className = 'app-name';
@@ -777,10 +808,86 @@ function buildAppCell(app) {
     cell.appendChild(warn);
   }
 
-  if (!app.added) {
-    cell.addEventListener('click', () => pickApp(app));
-  }
+  // ★ 点一下 = 切换勾选（不是直接写主进程）。
+  //   ⚠ 已挡的（`added`）**也绑**，因为「再点一下撤销」对着已挡的软件最常发生 ——
+  //     以前是 `if (!app.added)`，等于已挡的根本点不动，主人想取消也取消不了。
+  cell.addEventListener('click', () => togglePick(app));
   return cell;
+}
+
+// ---------- 勾选状态（本地草稿，不发 IPC）----------
+
+function pickedHas(app) {
+  if (!app || !app.exe) return false;
+  // ★ 已挡的软件**默认就是勾上的** —— 主人看到的是「当前生效的状态」，
+  //   而不是「这次又新加了多少」。这样「取消勾选 → 保存 = 从名单移除」也才成立。
+  if (app.added) return !pickerUnpicked.has(app.exe);
+  return !!pickerPicked.has(app.exe);
+}
+
+function togglePick(app) {
+  if (!app || pickerLocked || pickerSaving || pickerOpening || appsLoading) return;
+  if (!app.exe || app.blocked) {
+    // 解析不出 exe 的：勾了也没意义 —— 不打断，只飘一句
+    toast('这个软件找不到程序文件，勾了也拦不住');
+    return;
+  }
+  if (app.added) {
+    // 已挡的：在「取消」和「恢复」之间来回切
+    if (pickerUnpicked.has(app.exe)) pickerUnpicked.delete(app.exe);
+    else pickerUnpicked.add(app.exe);
+  } else {
+    if (pickerPicked.has(app.exe)) pickerPicked.delete(app.exe);
+    else pickerPicked.add(app.exe);
+  }
+  // ★ 只重画这**一格**，不重画整个网格 ——
+  //   重画会毁掉 hover / 焦点状态，鼠标底下那一格会「闪」一下，很廉价。
+  syncCellState(app);
+  renderPickerCount();
+}
+
+// 把某一格的外观同步成当前勾选状态（不重建 DOM，保住 hover 和焦点）
+function syncCellState(app) {
+  const cell = findCell(app);
+  if (!cell) return;
+  const picked = pickedHas(app);
+  cell.classList.toggle('picked', picked);
+  cell.classList.toggle('added', !!app.added);
+  cell.title = app.added ? '已在屏蔽名单；再次点击取消，保存后生效' : '点击选中，再次点击取消';
+  cell.setAttribute('aria-disabled', String(!app.exe || !!app.blocked || pickerLocked || pickerSaving));
+  cell.setAttribute('aria-checked', picked ? 'true' : 'false');
+  // 「已挡但被取消勾选」要能看出来 —— 不然主人以为它还在挡着
+  cell.classList.toggle('will-remove', !!app.added && !picked);
+}
+
+// 按 exe 找格子。⚠ 不能用变量存着的旧引用：搜索一变网格就重画了。
+function findCell(app) {
+  if (!app || !app.exe) return null;
+  return [...el.pickerGrid.querySelectorAll('.app-cell')]
+    .find((c) => c.dataset.exe === app.exe) || null;
+}
+
+// 底栏计数：区分「已经挡着的」和「这次勾的」，别让人以为勾了没生效
+function renderPickerCount() {
+  const list = Array.isArray(installedApps) ? installedApps : [];
+  const addN = pickerPicked.size;
+  const delN = pickerUnpicked.size;
+  const selected = list.filter(pickedHas).length;
+  const changed = addN + delN;
+  const text = `${list.length} 个软件 · 已选 ${selected} 个` + (changed ? ' · 未保存' : '');
+  el.pickerCount.textContent = text;
+  el.pickerCount.classList.toggle('dirty', changed > 0);
+
+  // 保存按钮：只有「有改动」时才亮起来
+  const save = el.btnPickerSave;
+  if ((pickerSaving || pickerOpening || appsLoading) &&
+      [save, el.btnPickerRescan].includes(document.activeElement)) el.pickerSearch.focus();
+  if (save) {
+    save.disabled = changed === 0 || pickerLocked || pickerSaving || pickerOpening || appsLoading;
+    save.textContent = pickerSaving ? '保存中…' : '保存';
+  }
+  el.btnPickerRescan.disabled = pickerSaving || pickerOpening || appsLoading;
+  el.pickerGrid.setAttribute('aria-busy', String(pickerSaving || pickerOpening || appsLoading));
 }
 
 // 按搜索词过滤（只在界面上过滤，不动主进程那份数据 —— 搜索不该触发重扫）
@@ -800,112 +907,170 @@ function renderPickerGrid() {
     ? `没找到「${pickerFilter.trim()}」。换个词试试？`
     : (list.length ? '这台电脑上没扫到软件。' : '还没扫到东西。');
 
-  const addedN = list.filter((a) => a.added).length;
-  el.pickerCount.textContent = `${list.length} 个软件 · 已加 ${addedN} 个`;
+  renderPickerCount();
 }
 
-// 打开面板：先开（有个正在加载的样子），再去主进程要数据。
+function pickerMessage(text = '', error = false) {
+  el.pickerLock.textContent = text;
+  el.pickerLock.classList.toggle('hidden', !text);
+  el.pickerLock.classList.toggle('error', error);
+}
+
+// 只缓存软件/图标。名单每次从主进程刷新，不能把缓存的 added 当成事实。
+function syncPickerBaseline(data) {
+  const valid = data && Array.isArray(data.exes) && Array.isArray(data.domains);
+  pickerLocked = !valid || !!data.running;
+  if (valid) {
+    focusData = data;
+    draftDomains = data.domains.slice();
+    draftExes = data.exes.slice();
+    const saved = new Set(draftExes);
+    for (const app of installedApps || []) app.added = saved.has(app.exe);
+    for (const exe of pickerPicked) if (saved.has(exe)) pickerPicked.delete(exe);
+    for (const exe of pickerUnpicked) if (!saved.has(exe)) pickerUnpicked.delete(exe);
+  }
+  pickerMessage(!valid ? '暂时读不到专注状态，请关闭后重新打开。'
+    : pickerLocked ? '专注进行中，只能查看；结束后再修改名单。' : '', !valid);
+  for (const app of installedApps || []) syncCellState(app);
+  renderPickerCount();
+}
+
 async function openAppPicker() {
+  if (!el.appPicker.classList.contains('hidden')) return;
+  const epoch = ++pickerEpoch;
+  pickerReturnFocus = document.activeElement;
+  pickerInert = new Map([...document.body.children]
+    .filter((node) => node !== el.appPicker).map((node) => [node, node.inert]));
+  for (const node of pickerInert.keys()) node.inert = true;
   el.appPicker.classList.remove('hidden');
   el.pickerSearch.value = '';
   pickerFilter = '';
-
-  if (installedApps) {
-    // 已经有缓存（主进程一次会话只扫一次）→ 立刻画出来，不闪
-    renderPickerGrid();
-    el.pickerSearch.focus();
-    return;
-  }
-
-  el.pickerGrid.textContent = '';
-  el.pickerEmpty.classList.add('hidden');
-  el.pickerCount.textContent = '';
-  el.pickerHint.textContent = '正在看这台电脑上装了哪些软件…（第一次会慢一两秒）';
-
-  await loadInstalledApps();
+  pickerPicked.clear();
+  pickerUnpicked.clear();
+  pickerOpening = true;
+  pickerLocked = true;
+  pickerMessage();
+  el.pickerHint.textContent = '点一下选中，再点一下取消。保存后用于下一次专注。';
+  renderPickerGrid();
   el.pickerSearch.focus();
+  try {
+    // A rescan may be replacing cached objects; await it before binding cells to them.
+    if (!installedApps || appsLoadPromise) await loadInstalledApps();
+    const data = await api.focusGet();
+    if (epoch !== pickerEpoch) return;
+    syncPickerBaseline(data);
+    renderPickerGrid();
+  } catch (err) {
+    if (epoch === pickerEpoch) {
+      pickerLocked = true;
+      pickerMessage('读取失败，请点「重新扫描」重试。', true);
+      console.error('[picker] open:', err);
+    }
+  } finally {
+    if (epoch === pickerEpoch) { pickerOpening = false; renderPickerCount(); }
+  }
 }
 
-async function loadInstalledApps() {
-  if (appsLoading) return;
+function loadInstalledApps(refresh = false) {
+  if (appsLoadPromise) return appsLoadPromise;
   appsLoading = true;
-  try {
-    const res = await api.appsList();
-    if (!res || res.ok === false) {
-      installedApps = [];
-      el.pickerHint.textContent = (res && res.error) || '没能读到软件列表';
-    } else {
-      installedApps = Array.isArray(res.apps) ? res.apps : [];
-      el.pickerHint.textContent = '这些是你电脑上装了的软件。点一个就加进名单。';
+  renderPickerCount();
+  appsLoadPromise = (async () => {
+    try {
+      // Share the entire refresh, including cache invalidation, with any reopening.
+      if (refresh) {
+        const result = await api.appsRescan();
+        if (!result || !result.ok) throw new Error('刷新失败');
+      }
+      const res = await api.appsList();
+      if (!res || res.ok === false || !Array.isArray(res.apps)) {
+        throw new Error((res && res.error) || '软件列表读取失败');
+      }
+      installedApps = res.apps;
+    } finally {
+      appsLoading = false;
+      appsLoadPromise = null;
+      renderPickerCount();
     }
-  } catch {
-    installedApps = [];
-    el.pickerHint.textContent = '扫软件列表时出错了';
-  } finally {
-    appsLoading = false;
-  }
-  renderPickerGrid();
+  })();
+  return appsLoadPromise;
 }
 
 function closeAppPicker() {
+  if (pickerSaving) return; // 防止保存尚未返回却显示「已取消」。
+  if (pickerPicked.size + pickerUnpicked.size) toast('未保存的选择已取消，名单没有改变');
+  ++pickerEpoch;
+  pickerOpening = false;
+  pickerPicked.clear();
+  pickerUnpicked.clear();
   el.appPicker.classList.add('hidden');
+  for (const [node, wasInert] of pickerInert) node.inert = wasInert;
+  pickerInert.clear();
+  if (pickerReturnFocus && pickerReturnFocus.isConnected) pickerReturnFocus.focus();
 }
 
-// 点了一个软件 → 加进黑名单。
-// ⚠ 「加完到底成不成功」以主进程的返回为准（和手动输入那条路走的是同一个接口）。
-async function pickApp(app) {
-  if (!app || app.added) return;
-
-  // ★ 拦不住的那些：先问一句，别让主人以为加上了就没事了。
-  if (app.blocked) {
-    const yes = window.confirm(
-      `「${app.name}」这个快捷方式里没找到程序文件，加进名单**可能拦不住它**。\n\n还是要加吗？`
-    );
-    if (!yes) return;
+// 保存只发一次写请求。基于最新名单合并增删，保留搜索隐藏项、手输软件和网站。
+async function savePicks() {
+  if (pickerLocked || pickerSaving || pickerOpening || appsLoading) return;
+  if (!(pickerPicked.size + pickerUnpicked.size)) return;
+  pickerSaving = true;
+  pickerMessage();
+  for (const app of installedApps || []) syncCellState(app);
+  renderPickerCount();
+  try {
+    const current = await api.focusGet();
+    if (!current || !Array.isArray(current.exes) || !Array.isArray(current.domains)) {
+      throw new Error('暂时读不到当前名单，请重试');
+    }
+    if (current.running) {
+      syncPickerBaseline(current);
+      return;
+    }
+    const want = new Set(current.exes);
+    for (const exe of pickerPicked) want.add(exe);
+    for (const exe of pickerUnpicked) want.delete(exe);
+    const res = await api.focusSetBlacklist({ domains: current.domains, exes: [...want] });
+    if (!res || res.ok === false || !Array.isArray(res.exes) || !Array.isArray(res.domains)) {
+      throw new Error((res && res.error) || '没能保存，请重试');
+    }
+    const got = new Set(res.exes);
+    if ([...want].some((exe) => !got.has(exe)) || [...pickerUnpicked].some((exe) => got.has(exe))) {
+      throw new Error('部分修改未生效，请核对名单后重试');
+    }
+    pickerPicked.clear();
+    pickerUnpicked.clear();
+    syncPickerBaseline({ ...current, ...res });
+    renderFocusLists();
+    // 不重建网格，保存后也保留悬停、滚动和键盘焦点。
+    pickerMessage('已保存，将用于下一次专注。');
+  } catch (err) {
+    // 错误必须在浮层里面，不能藏在遮罩后；失败保留草稿，可直接重试。
+    pickerMessage(`${err.message || '保存失败'}。选择已保留。`, true);
+  } finally {
+    pickerSaving = false;
+    for (const app of installedApps || []) syncCellState(app);
+    renderPickerCount();
   }
-
-  // 解析不出 exe 的，进程名是空的 —— 这时只能老老实实告诉主人加不了。
-  if (!app.exe) {
-    toast('这个软件找不到程序文件，暂时加不进名单');
-    return;
-  }
-
-  const res = await api.focusSetBlacklist({
-    domains: draftDomains,
-    exes: [...draftExes, app.exe],
-  });
-  if (!res || res.ok === false) {
-    showFocusError((res && res.error) || '没能加上，稍后再试');
-    return;
-  }
-  hideFocusError();
-
-  // 主进程可能拒收（比如撞上保护名单）——那 exes 里就不会有它，如实说清楚
-  const saved = (res.exes || []).includes(app.exe);
-  focusData = Object.assign({}, focusData, { domains: res.domains, exes: res.exes });
-  draftDomains = res.domains.slice();
-  draftExes = res.exes.slice();
-  renderFocusLists();
-
-  if (!saved) {
-    toast(`「${app.name}」没能加进去（可能撞上了保护名单）`);
-    return;
-  }
-
-  // 本地面板也要同步成「已加入」，不然会让人以为没生效
-  const hit = (installedApps || []).find((a) => a.exe === app.exe);
-  if (hit) hit.added = true;
-  renderPickerGrid();
-  toast(`已挡住「${app.name}」`);
 }
 
-// 重新扫描：清掉主进程的缓存再扫一遍（装了新软件时用得上）
 async function rescanApps() {
-  if (appsLoading) return;
-  el.pickerHint.textContent = '正在重新扫描…';
-  try { await api.appsRescan(); } catch { /* 清缓存失败就还按旧的扫，别卡住 */ }
-  installedApps = null;
-  await loadInstalledApps();
+  if (appsLoading || pickerOpening || pickerSaving) return;
+  const epoch = pickerEpoch;
+  pickerOpening = true;
+  renderPickerCount();
+  pickerMessage('正在重新扫描，未保存的选择会保留…');
+  try {
+    // The shared promise owns the refresh, so reopening during a rescan waits for it.
+    await loadInstalledApps(true);
+    const current = await api.focusGet();
+    if (epoch !== pickerEpoch) return;
+    syncPickerBaseline(current);
+    renderPickerGrid();
+  } catch (err) {
+    if (epoch === pickerEpoch) pickerMessage('重新扫描失败，选择已保留，请重试。', true);
+  } finally {
+    if (epoch === pickerEpoch) { pickerOpening = false; renderPickerCount(); }
+  }
 }
 
 // ---------- 单个日程的操作 ----------
@@ -1050,10 +1215,11 @@ el.btnAddExe.addEventListener('click', () => addFocusItem('exe'));
 el.btnCustomOk.addEventListener('click', applyCustomMinutes);
 el.btnFocusStart.addEventListener('click', startFocus);
 
-// ---- 软件选择器（v4 批次 1）----
+// ---- 软件选择器（v4 批次 1；批次 2.5 改「先勾后存」）----
 el.btnBrowseApps.addEventListener('click', openAppPicker);
 el.btnPickerClose.addEventListener('click', closeAppPicker);
 el.btnPickerRescan.addEventListener('click', rescanApps);
+el.btnPickerSave.addEventListener('click', savePicks);
 // 点面板外面的灰底 = 关掉（和大多数弹窗一致的习惯）
 el.appPicker.addEventListener('click', (e) => {
   if (e.target === el.appPicker) closeAppPicker();
@@ -1066,7 +1232,14 @@ el.pickerSearch.addEventListener('input', () => {
 // Esc 关面板。⚠ 要抢在「表单的 Esc = 取消编辑」前面处理，
 //   否则面板开着按 Esc 会去关那个没打开的表单（看起来像「没反应」）。
 el.appPicker.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAppPicker(); }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAppPicker(); return; }
+  // button 原生支持空格和回车，不再手动 click，以免一次按键触发两次。
+  if (e.key === 'Tab') {
+    const nodes = [...el.appPicker.querySelectorAll('button:not(:disabled), input')];
+    const first = nodes[0], last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
 });
 
 // 回车 = 加一条（填网址 / 程序名时最顺手）
