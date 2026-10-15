@@ -27,3 +27,24 @@ Thumbs.db
 # 环境变量（如有）
 .env
 .env.local
+
+# ── 以下为本地开发内容，不随仓库分发 ──
+
+# 工作区记忆与协作记录（含本机路径、用户名等个人信息）
+.workbuddy-ai/
+
+# 过程文档（开发历程 / 交接记录 / 设计草稿 / 临时审计）
+HANDOFF*.md
+PLAN*.md
+SKILLS-*.md
+CLAUDE.md
+
+# 早期设计稿归档
+design/
+
+# Live2D 可行性验证台（一次性验证用，现已不可运行）
+spike/
+
+# 打包调试产物
+dist/
+builder-debug.yml
