@@ -82,6 +82,9 @@ const SUITES = {
   'test:glide': { kind: 'e2e', desc: '松手惯性 + 橡皮筋（真跑主进程动画）', covers: ['src/main/pet-drag.js', 'src/renderer/pet/', 'src/main/preload.js'] },
   'test:exit': { kind: 'e2e', desc: '退出按钮（⚠ 会真的退出，正常）', covers: ['src/renderer/pet/', 'src/main/preload.js'] },
   'test:drag': { kind: 'e2e', desc: '拖拽性能基准（只印测量值，不算通过/失败）', covers: ['src/renderer/pet/', 'src/main/place.js', 'src/main/pet-drag.js'] },
+
+  // 体检类（不是断言套件，但同样是「改了要跑」的）
+  'check:package': { kind: 'node', desc: '打包配置体检（appId 一致 / 许可随包 / 键名 / 图标）', covers: ['electron-builder.yml'] },
 };
 
 // ─────────────────────────────────────────────────────────────

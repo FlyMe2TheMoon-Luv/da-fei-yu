@@ -483,6 +483,41 @@ desktop-pet/
       先问「它是**用的时候**需要，还是**加载的时候**就需要」—— 绝大多数是前者。
     ★ 另一条：**代码里那句「不方便测，所以不测」的注释是个警报，不是设计说明**。
       数据层尤其不能没有自检 —— 它坏了不会崩，只会**静默读回空数据**。
+77. **★ 打包配置写错一个键名，报错完全看不懂** —— v4 批次 4-b：
+    `win: { sign: false }` 里那个 `sign` 不是合法键名，构建直接失败，
+    报错是「configuration.win should be one of these: null」—— **连是哪个键都不说**。
+    ★ 修法：拿 `app-builder-lib/scheme.json` 把用到的键对一遍
+      （已做成 `npm run check:package` 的第 ⑧ 条，带负对照）。
+    ★ 推广：**外部配置的 schema 就在 node_modules 里**，能对着验就别靠背。
+      合法键去 scheme.json 的 `properties`（顶层）和 `definitions.*`（子配置）里查。
+78. **★ `npm run build` 裸跑 = 把整个仓库打进安装包** —— v4 批次 4-b：
+    这个项目以前**一条 electron-builder 配置都没有**，`npm run build` 就是裸跑。
+    默认 `files: ['**/*']`：`scripts/` / `tmp/` / `outputs/` / `spike/` / `design/` /
+    几十份 HANDOFF·PLAN 文档**全会进包**，图标还退回 Electron 默认那个。
+    ★ 修法：写 `electron-builder.yml`，`files` 用**白名单**（只列要的）。
+      ⚠ electron-builder 里写了 `files` 是**替换**默认值，不是追加。
+    ★ 顺带一条硬要求：**许可文件必须进白名单**。CC BY-NC-SA 要求随分发提供
+      署名与协议原文，这是**协议义务**，不是「顺手带上」—— 漏了构建照样成功，
+      而且没人会发现（已做成 `check:package` 第 ④ 条）。
+79. **★ 打包后的 exe 要喂真正的 Chromium 参数，别喂我们自己的开关** —— v4 批次 4-b：
+    `--no-gpu` 只是 `start-dev.js` 里的**自定义开关**，Electron 根本不认识。
+    直接跑 `dist/win-unpacked/xxx.exe --no-gpu` 会看到 GPU 进程反复崩：
+    `GPU process exited unexpectedly: exit_code=-1073741819` →
+    `FATAL: GPU process isn't usable. Goodbye.` 然后整个应用消失。
+    ★ 正确参数是 `--disable-gpu --enable-unsafe-swiftshader --no-sandbox`。
+    ★ 另一条：本机 shell 带着 `ELECTRON_RUN_AS_NODE=1`，打包后的 exe 会**退化成 Node**，
+      报 `bad option: --no-gpu` —— 看着完全不像环境问题，启动前先 `unset`。
+80. **★ 「构建成功」不是验收，「产物是对的」才是** —— v4 批次 4-b：
+    构建通过只说明配置没报错，不代表包能用。至少验四样：
+      ① 包里到底有什么（`@electron/asar` 的 `listPackage()` 列一遍，确认该在的在、
+         不该在的不在 —— 尤其许可文件和 `tmp/`）；
+      ② 图标里有 256×256（缺了某些 Windows 上会糊成一团）；
+      ③ **真的把打包后的应用跑起来**（能看到模块初始化日志）；
+      ④ 能优雅退出（`--pet-quit` 后进程消失，且**写出了自己的数据文件**）。
+    ★ 前三样已做成 `npm run check:package`（+ 手动跑一次），第四样只能人工跑。
+    ★ 还有一条容易骗过自己的：**体检脚本自己也可能「静默跳过」**。
+      写这个脚本时就踩了 —— `audit()` 调用处漏传一个参数，对应那条校验整条变成摆设，
+      界面上却一片全绿。所以 `check:package` 专门加了两条「原料拿到了吗」的断言。
 50. **中文过滤规则不能照抄英文那套「词边界」** —— v4 踩到：过滤卸载项时写了
     `(^|[\s\-_])(uninstall|卸载)([\s\-_.]|$)`，英文的 `Uninstall` 能匹配，
     可中文的「卸载微信」「卸载火绒」**一条都匹配不上**（中文没有空格当分隔符）。
@@ -587,6 +622,7 @@ npm run test:picker-ui       # v4·软件选择器（真渲染进程 + 真 prelo
 npm run test:focus-stop-ui   # v4·退出专注的长按进度条（真渲染进程 + 内存 IPC）65
                              # 含「填充是蓝色不是红色」一节（色相 + 彩度一起判）
 npm run check:hosts          # hosts 体检（能不能读 / 错误码 / 有无残留块；只读）
+npm run check:package        # 打包配置体检（appId 一致 / 许可随包 / 键名 / 图标 / 署名；只读）
 
 # Electron 端到端自检（慢，串行跑）
 npm run test:settings-e2e    # 设置窗口（周视图 + 专注页 + 选择器 + 视觉层 + 侧边栏 + 空间一致）181
@@ -599,7 +635,11 @@ npm run test:glide           # v4·松手惯性 + 橡皮筋（真跑主进程动
 npm run test:focus           # 桌宠不抢焦点（⚠ 和专注模式无关，专注模式是 focusmode）20
 npm run test:gaze            # 拖拽时视线跟随开关（回归哨兵）6
 npm run test:exit            # 退出按钮（回归哨兵；会真的退出）
-npm run build                # 打包（electron-builder）
+npm run build                # 打包（electron-builder，读 electron-builder.yml）
+                             #   → dist/大肥鱼 Setup 0.1.0.exe（安装包）
+                             #   → dist/大肥鱼 0.1.0.exe（免安装版）
+                             # ⚠ 跑打包后的 exe 要 unset ELECTRON_RUN_AS_NODE，
+                             #   并给真正的 Chromium 参数（见第 79 条）
 
 # 收尾一把梭：纯 Node 全部 + 端到端全部，统一汇总（约 4 分 40 秒）
 npm run test:all             # 36 套 / 1434 断言

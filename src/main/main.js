@@ -12,7 +12,7 @@
 // 渲染进程自己判断不了「鼠标是不是压在角色身上」（那是像素级的事），
 // 所以判定在渲染进程做，setIgnoreMouseEvents 的执行在主进程做。
 
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, Notification, dialog } = require('electron');
 const path = require('path');
 const store = require('./store');
 const schedules = require('./schedules');
@@ -409,6 +409,32 @@ function resetPosition() {
 
 // ---------- 托盘 ----------
 
+// CC BY-NC-SA 要求「给出适当署名」—— 这是**应用内**的署名入口。
+// 完整署名链在随包分发的 CREDITS.md 里；这里给一份一眼能看完的摘要，
+// 让拿到安装包的人不用翻仓库也能看到权利人是谁、改了什么。
+function showAbout() {
+  const detail = [
+    '形象素材：社区二次创作「女仆鲸鱼娘」（并非 DeepSeek 官方形象）',
+    '权利人：上善无形 / ZipZipPipe / 氵六青',
+    '协议：CC BY-NC-SA 4.0（署名—非商业性使用—相同方式共享）',
+    '修改说明：本项目补登记了 model3.json 里的 44 个表情；',
+    '　　　　　美术文件（.moc3 / 贴图 / 表情本身）一个字节都没动。',
+    '',
+    '代码协议：MIT（详见随包的 LICENSE）',
+    '本项目为非商业项目，与 DeepSeek 官方无任何关联。',
+    '',
+    '完整署名链与协议原文：见随包分发的 CREDITS.md / LICENSE-ASSETS.md。',
+  ].join('\n');
+  dialog.showMessageBox({
+    type: 'info',
+    title: '关于 · 署名',
+    message: '大肥鱼 · 桌面宠物',
+    detail,
+    buttons: ['好'],
+    noLink: true,
+  });
+}
+
 // 菜单内容只写一份，托盘右键和桌宠身上右键共用
 function menuTemplate() {
   return [
@@ -417,6 +443,7 @@ function menuTemplate() {
     { label: '和大肥鱼聊天', click: () => chatWindow.toggle() },
     { type: 'separator' },
     { label: '重置位置', click: resetPosition },
+    { label: '关于 · 署名', click: showAbout },
     { type: 'separator' },
     {
       label: '退出桌宠',

@@ -52,10 +52,12 @@
     "test:changed": "node scripts/test-changed.js",
     "test:all": "node scripts/test-changed.js --all",
     "test:changed-check": "node scripts/test-changed.js --selfcheck",
-    "check:hosts": "node scripts/check-hosts.js"
+    "check:hosts": "node scripts/check-hosts.js",
+    "check:package": "node scripts/check-package.js"
   },
-  "author": "",
+  "author": "大肥鱼项目",
   "license": "MIT",
+  "private": true,
   "devDependencies": {
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",

@@ -1,0 +1,65 @@
+# electron-builder 打包配置（v4 批次 4-b）
+#
+# ── 为什么需要这个文件 ──
+#   在这之前 `npm run build` 是**裸跑** electron-builder，一条配置都没有 ——
+#   默认行为是把整个仓库塞进安装包：scripts/、tmp/、outputs/、spike/、design/、
+#   几十份 HANDOFF / PLAN 文档全都会进去，图标也会退回 Electron 默认那个。
+#   所以以前根本没法发布，只是「没试过而已」。
+#
+# ── 原则 ──
+#   ① **只打运行真正需要的东西**（见下面的 files 白名单）。
+#   ② **许可文件必须跟着走** —— CC BY-NC-SA 要求随分发提供署名与协议原文，
+#      这不是「顺手带上」，是**协议义务**。
+#   ③ 用户数据放 userData，卸载时**不删**（日程在里面，见 nsis 那段）。
+
+appId: com.desktop-pet.app # 必须和 main.js 里的 app.setAppUserModelId 一致
+productName: 大肥鱼
+copyright: 代码 MIT / 素材 CC BY-NC-SA 4.0 · 非商业项目
+
+directories:
+  output: dist
+
+# ★ 白名单：**只列要的**，没列的一律不进包。
+#   （electron-builder 里写了 files 就是替换掉默认的 `**/*`，不是追加。）
+files:
+  - src/**/* # 主进程 + 渲染进程 + 素材 + Live2D 模型 + vendor（pixi 等）
+  - package.json # 运行时要读 name / version / main
+  # 下面三个是**协议义务**，别删：
+  - LICENSE # 代码协议（MIT）
+  - LICENSE-ASSETS.md # 素材协议（CC BY-NC-SA 4.0）
+  - CREDITS.md # 完整署名链（含「氵六青」，不能漏）
+
+# 主进程只 require electron 和 Node 内置模块，渲染进程的 pixi 走 vendor/，
+# 所以**运行时不依赖任何 node_modules** —— 包里不该有 node_modules。
+asar: true
+
+win:
+  icon: src/assets/pet/桌宠.ico # 已含 16/32/48/64/128/256 六种尺寸
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable # 免安装版：双击就能跑，不用装
+      arch: [x64]
+  # 个人非商业项目，没有代码签名证书。
+  # （没有证书时 electron-builder 本来就会跳过签名；这里写出来是把意图说清。
+  #   ⚠ 别写成 `sign: false` —— 那不是合法键名，构建会直接报
+  #   「configuration.win should be one of these: null」，很难看懂。）
+  forceCodeSigning: false
+
+nsis:
+  oneClick: false # 给一个「选装到哪」的机会，别一键闷头装
+  perMachine: false # 装到当前用户下，不需要管理员
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 大肥鱼
+  # ★ 卸载时**不要**删 userData：那里存着主人的日程和专注名单。
+  #   默认是 false，这里写出来是为了「别有人以后手滑改成 true」。
+  deleteAppDataOnUninstall: false
+
+# 本地构建，不做发布（避免构建时去联网找发布目标）
+publish: null
+
+# 如果以后遇到 Electron 二进制下载不动（国内网络），可以打开下面这行，
+# 直接用 node_modules 里已有的那份，省一次 ~100MB 下载：
+# electronDist: node_modules/electron/dist
