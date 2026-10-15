@@ -55,6 +55,7 @@ let saveTimer = null;
 let glideTimer = null;   // 动画循环的定时器
 let glide = null;        // 当前滑行状态（null = 没在滑）
 let dragSamples = [];    // 本次拖拽最近若干个位置，松手时用来估速度
+let dragBounds = null;   // 本次拖拽的边界（按下时算一次，别每次 mousemove 都问系统）
 
 // ---------- 位置记忆 ----------
 
@@ -448,6 +449,10 @@ ipcMain.on('pet:drag-start', (_e, p) => {
   //   不这么做的话，手指刚碰到它、它还在按上一段惯性跑，手感是「抓不住」。
   stopGlide();
   dragSamples = [];
+  // ★ 边界在这里算**一次**就够了。
+  //   原来每次 mousemove 都调 screen.getDisplayNearestPoint()（要问系统），
+  //   拖拽时一秒上百次 —— 纯粹是白花的时间，拖起来会觉得「跟不上手」。
+  dragBounds = petDragBounds();
   const [wx, wy] = win.getPosition();
   dragOffset = { dx: Math.round(p.x) - wx, dy: Math.round(p.y) - wy };
 });
@@ -459,11 +464,22 @@ ipcMain.on('pet:drag-move', (_e, p) => {
 
   // v4 批次 3-b：拖出屏幕边界时给「渐进阻力」（不是硬停）。
   // 界内时 rubberbandAxis 原样返回，所以正常拖动一点变化都没有。
-  const bounds = petDragBounds();
+  if (!dragBounds) dragBounds = petDragBounds();
+  // 拖到别的显示器上了（离缓存的屏太远）→ 重新问一次系统。
+  // 这是纯算术，不调系统，所以不会拖慢拖拽。
+  else {
+    const sx = dragBounds.size[0] * 2;
+    const sy = dragBounds.size[1] * 2;
+    if (wantX < dragBounds.minX - sx || wantX > dragBounds.maxX + sx
+      || wantY < dragBounds.minY - sy || wantY > dragBounds.maxY + sy) {
+      dragBounds = petDragBounds();
+    }
+  }
+
   let tx = wantX, ty = wantY;
-  if (bounds) {
-    tx = petDrag.rubberbandAxis(wantX, bounds.minX, bounds.maxX, bounds.size[0]);
-    ty = petDrag.rubberbandAxis(wantY, bounds.minY, bounds.maxY, bounds.size[1]);
+  if (dragBounds) {
+    tx = petDrag.rubberbandAxis(wantX, dragBounds.minX, dragBounds.maxX, dragBounds.size[0]);
+    ty = petDrag.rubberbandAxis(wantY, dragBounds.minY, dragBounds.maxY, dragBounds.size[1]);
   }
 
   movePet(tx, ty);   // 注意：这里不能用 setPosition，会把窗口撑大（见 movePet）
@@ -484,7 +500,8 @@ ipcMain.on('pet:drag-move', (_e, p) => {
 ipcMain.on('pet:drag-end', (_e, p = {}) => {
   dragOffset = null;
 
-  const bounds = petDragBounds();
+  const bounds = dragBounds || petDragBounds();
+  dragBounds = null;
   if (!win || win.isDestroyed() || !bounds) {
     dragSamples = [];
     savePosition();
@@ -1073,7 +1090,7 @@ async function runGlideSelfTest() {
     return { x: posX(), y: posY() };
   };
 
-  // ===== ① 松手后还要继续走（惯性滑行）=====
+  // ===== ① 松手后还会滑一点，但**不许滑太远** =====
   log('');
   log('① 快速往右甩一下再松手');
   {
@@ -1084,8 +1101,13 @@ async function runGlideSelfTest() {
     const after = posX();
     await sleep(450);
     const settled = posX();
-    log(`   松手时 x=${at.x} → 750ms 后 x=${after} → 再等 450ms x=${settled}`);
-    ok(after - at.x > 20, '★ 松手后还继续往右滑了一段', `多走了 ${after - at.x}px`);
+    const glide = after - at.x;
+    log(`   松手时 x=${at.x} → 750ms 后 x=${after}（滑了 ${glide}px）→ 再等 450ms x=${settled}`);
+    // ★ 主人 2026-10-15 的反馈就是「滑太远」，所以这里**上下都要卡**：
+    //   下界保证「不是硬停」（还有一点点惯性，手感不突兀），
+    //   上界保证「没有滑出去」（滑太远就是主人抱怨的那个问题）。
+    ok(glide > 8, '★ 松手后还会滑一点点（不是硬邦邦地停住）', `滑了 ${glide}px`);
+    ok(glide < 60, '★ 但滑得很少（主人要求「别滑太远」）', `滑了 ${glide}px < 60px`);
     ok(Math.abs(settled - after) < 4, '★ 会自己停稳（不再漂）', `450ms 内只动了 ${Math.abs(settled - after)}px`);
     ok(inside(settled, posY()), '停稳后整个窗口在屏幕内', `x=${settled} ∈ [${BOUNDS.minX},${BOUNDS.maxX}]`);
   }
@@ -1144,9 +1166,9 @@ async function runGlideSelfTest() {
   {
     await home();
     await drag({ steps: 20, dx: 6, dy: 0, stepMs: 10 });
-    await sleep(80); // 让它滑起来
+    await sleep(50); // 让它滑起来
     const moving = posX();
-    await sleep(60);
+    await sleep(100);
     const stillMoving = posX();
     // 立刻抓住
     await win.webContents.executeJavaScript(`(() => { window.petAPI.dragStart({ x: 0, y: 0 }); return true; })()`);
@@ -1549,9 +1571,17 @@ async function runSyncSelfTest() {
   const size3 = win.getSize();
   const s3 = await readState();
   log(`   第 1 轮后 ${size1.join('×')} · 第 3 轮后 ${size3.join('×')}（拖之前 ${sizeAfterFirst.join('×')}）`);
-  ok(size3[0] === size1[0] && size3[1] === size1[1],
-    '★ 拖第 3 轮和第 1 轮结束时的窗口尺寸一样（没有一次一次累积变大）',
-    ` → ${size1.join('×')} vs ${size3.join('×')}`);
+  // ⚠ 这里不能用「完全相等」：窗口外框尺寸**跟绝对位置有关**
+  //   （1.5 倍缩放按 DPI 取整，见 CLAUDE.md 第 32 条，实测 404×384 / 404×382 / 405×385 都出现过）。
+  //   而 v4 批次 3-b 之后每次松手都会滑一小段，落点会差几个像素 → 尺寸跟着抖 ±1px。
+  //   所以要卡的是「**没有累积变大**」这件事：旧代码每拖一次长 ~19px，
+  //   3 轮下来会从 404 涨到 443（见下面负对照①的实测 404 → 444）。
+  //   容差 2px 足够把那个 bug 抓死，又不会被 DPI 取整的 ±1px 晃成假失败。
+  const growX = Math.abs(size3[0] - sizeAfterFirst[0]);
+  const growY = Math.abs(size3[1] - sizeAfterFirst[1]);
+  ok(growX <= 2 && growY <= 2,
+    '★ 反复拖 3 轮，窗口尺寸基本没变（旧代码每拖一次长 ~19px，3 轮会到 443）',
+    ` → 拖之前 ${sizeAfterFirst.join('×')} · 第 3 轮 ${size3.join('×')}（差 ${growX}×${growY}）`);
   ok(Math.abs(btnCx(s3) - btnCx(base)) <= 0.75,
     '★ 拖完 3 轮，按钮还在原处',
     ` → ${btnCx(base)} → ${btnCx(s3)}`);

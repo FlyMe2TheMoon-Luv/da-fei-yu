@@ -315,6 +315,11 @@ src/renderer/settings/     ← 界面：软件选择器（不碰系统，通过 
 现在拖出边界会有渐进阻力，松手自动弹回屏幕内 —— 也就是**再也丢不掉它了**。
 如果主人更喜欢「能停在半截」，把 `pet-drag.js` 里 `rubberbandAxis` 那两行去掉即可。
 
+★ **手感调参**（主人 2026-10-15 反馈「滑太远、希望更跟鼠标」后收紧过一次）：
+所有手感参数都在 `pet-drag.js` 顶部（`PROJECT_SECONDS` / `FLICK_RESPONSE` /
+`FLICK_DAMPING` / `MAX_SPEED` / `RUBBER_CONSTANT`），表见 HANDOFF-V4 §2。
+实测松手滑行 81px → **26px**；拖出边界 69px 时窗口超出 35px → **54px**（更跟手）。
+
 **为什么参数是「阻尼比 + 响应时间」：** apple-design 给的语义参数就是这两个，
 人能直接调（`response` 0.3–0.4 是舒服区间；`damping` 1.0 不弹、<1 会弹）。
 ★ 默认 `damping 1.0`，**只在手势本身带惯性时**才给 ~0.8 的弹 ——

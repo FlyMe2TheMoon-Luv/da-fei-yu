@@ -25,12 +25,20 @@
 const { rubberband } = require('./rubberband');
 const { stepSpring, isSettled } = require('./spring');
 
+// ── 手感参数（主人 2026-10-15 反馈「滑太远，希望更跟鼠标」后收紧过一次）──
+//
+// 怎么调（这三个数就是全部）：
+//   · PROJECT_SECONDS 越小 → 松手后滑得越近。想要「松手基本就停」就调到 0.02 以下。
+//   · FLICK_RESPONSE  越小 → 停得越快（但也越「硬」）。
+//   · FLICK_DAMPING   1.0 = 一点都不弹（最跟手）；< 1 会轻轻弹一下。
+//   · RUBBER_CONSTANT 越大 → 拖到屏幕边上越跟手（1.0 = 完全跟手、毫无阻力）。
 const BACK_RESPONSE = 0.3;    // 弹回边界：快一点，别拖泥带水
-const FLICK_RESPONSE = 0.4;   // 惯性滑行：慢一点，滑得自然
-const FLICK_DAMPING = 0.8;    // 只有带惯性才给一点弹
-const PROJECT_SECONDS = 0.15; // 把松手速度投影成落点（v × 0.15）
-const MAX_SPEED = 3000;       // px/s —— 再快也就这样，免得宠物被甩到天边
+const FLICK_RESPONSE = 0.26;  // 惯性滑行：0.4 → 0.26（更快停住，更跟手）
+const FLICK_DAMPING = 1.0;    // 不再给「弹」—— 主人要的是跟手，不是活泼
+const PROJECT_SECONDS = 0.05; // 0.15 → 0.05（松手后滑的距离缩到约 1/3）
+const MAX_SPEED = 2000;       // px/s —— 3000 → 2000，免得一甩就飞很远
 const MAX_GLIDE_SECONDS = 3;  // 兜底：再怎么算也不许动超过 3 秒
+const RUBBER_CONSTANT = 0.9;  // 0.55 → 0.9：边界阻力调轻，拖拽更跟鼠标
 
 const isNum = (n) => typeof n === 'number' && Number.isFinite(n);
 
@@ -42,12 +50,13 @@ function clamp(v, lo, hi) {
 // 拖拽中：想要的位置超出边界时，给出「有阻力」的位移。
 // lo/hi 是**窗口左上角的合法范围**（保证整个窗口在屏幕里）；
 // size 是参考尺寸（一般用窗口宽/高）—— 越界最多也就挪出不到一个窗口。
-function rubberbandAxis(desired, lo, hi, size) {
+// constant 越大越跟手（1.0 = 完全 1:1，等于没有阻力）。
+function rubberbandAxis(desired, lo, hi, size, constant = RUBBER_CONSTANT) {
   if (!isNum(desired)) return lo;
   const min = Math.min(lo, hi);
   const max = Math.max(lo, hi);
-  if (desired < min) return min - rubberband(min - desired, size);
-  if (desired > max) return max + rubberband(desired - max, size);
+  if (desired < min) return min - rubberband(min - desired, size, constant);
+  if (desired > max) return max + rubberband(desired - max, size, constant);
   return desired;
 }
 
@@ -92,7 +101,6 @@ function releasePlan({ x, y, vx, vy, bounds, reducedMotion = false }) {
     damping: FLICK_DAMPING, response: FLICK_RESPONSE, instant: false, reason: 'flick',
   };
 }
-
 // 把 plan 变成可以逐帧推进的状态机。
 // ★ 已经在目标上、速度也几乎是 0 时直接 done —— 不然「点一下没拖动」也会起一次动画。
 // ⚠ 这里容易写错：弹簧的状态字段是 `x`（位置）和 `v`（速度），**不分横竖**。
@@ -131,4 +139,5 @@ module.exports = {
   PROJECT_SECONDS,
   MAX_SPEED,
   MAX_GLIDE_SECONDS,
+  RUBBER_CONSTANT,
 };

@@ -87,15 +87,18 @@ section('1. rubberbandAxis（拖出边界时的渐进阻力）');
 // ---------- 2. 松手决策 ----------
 section('2. releasePlan（松手那一刻往哪去、弹不弹）');
 {
-  // 界内 + 往右甩 → 惯性滑行，轻弹
+  // 界内 + 往右甩 → 惯性滑行，不弹（主人 2026-10-15 要「更跟手」，所以不再给弹）
   const flick = releasePlan({ x: 400, y: 300, vx: 1200, vy: 0, bounds: BOUNDS });
-  ok(flick.reason === 'flick' && flick.damping === 0.8, '界内甩手 → 惯性滑行 + 轻弹（damping 0.8）',
+  ok(flick.reason === 'flick' && flick.damping === 1.0, '界内甩手 → 惯性滑行 + 不弹（damping 1.0）',
     `${flick.reason} damping=${flick.damping}`);
   ok(flick.targetX > 400, '★ 落点在甩的方向上（会继续往前走）',
     `x=400 → 落点 ${flick.targetX.toFixed(1)}（+${(flick.targetX - 400).toFixed(1)}px）`);
   ok(Math.abs(flick.targetX - (400 + 1200 * PROJECT_SECONDS)) < 1e-6, '落点 = 当前位置 + 速度 × 投影时长',
     `期望 ${400 + 1200 * PROJECT_SECONDS}`);
   ok(flick.targetY === 300, '竖直方向没速度 → 落点不动', `y 落点 ${flick.targetY}`);
+  // ★ 主人反馈「滑太远」之后钉一条上限：常见甩速下，落点不许离手太远
+  ok(flick.targetX - 400 <= 60, '★ 1200px/s 甩一下，落点离松手处不超过 60px（别滑太远）',
+    `实际 ${(flick.targetX - 400).toFixed(1)}px`);
 
   // ★ 负对照：把速度丢掉（「松手就停」的老写法）→ 落点等于当前位置，滑行距离 0
   const noVel = releasePlan({ x: 400, y: 300, vx: 0, vy: 0, bounds: BOUNDS });
@@ -149,27 +152,23 @@ section('3. createGlide / stepGlide（松手之后的动画）');
     '最后停在落点上', `x=${g.x.toFixed(2)} 目标=${g.targetX.toFixed(2)}`);
 
   const moved = g.x - 400;
-  ok(moved > 50, '★ 松手后确实还往前滑了一段', `滑了 ${moved.toFixed(1)}px`);
+  ok(moved > (plan.targetX - 400) * 0.8, '★ 松手后确实走到了落点附近',
+    `滑了 ${moved.toFixed(1)}px（落点 ${(plan.targetX - 400).toFixed(1)}px）`);
 
-  // ★ 负对照：「速度衔接」到底有没有生效，要看**前几帧** —— 不是看总帧数。
-  //   一开始写的是「接速度用的帧数更少」，实测 36 vs 37，差 1 帧就通过 ——
-  //   这种断言等于没断言（两条曲线最后都要到同一个落点，帧数当然差不多）。
-  //   真正能区分的是**头三帧**：带着 1200px/s 出发 vs 从静止起步，差一大截。
-  const { stepSpring } = require('../src/main/spring');
-  let withVel = { x: 400, v: 1200 }, noVel = { x: 400, v: 0 };
-  for (let k = 0; k < 3; k++) {
-    withVel = stepSpring(withVel, g.targetX, 1 / 60, { damping: 0.8, response: 0.4 });
-    noVel = stepSpring(noVel, g.targetX, 1 / 60, { damping: 0.8, response: 0.4 });
-  }
-  const wMoved = withVel.x - 400;
-  const nMoved = noVel.x - 400;
-  ok(wMoved > nMoved * 1.5, '★ 头三帧：带速度的走了 1.5 倍以上（说明速度真的被交出去了）',
-    `带速度 ${wMoved.toFixed(1)}px vs 静止起步 ${nMoved.toFixed(1)}px（${(wMoved / nMoved).toFixed(2)} 倍）`);
-  // ★ 负对照：这就是「丢掉速度」时的样子 —— 头三帧明显走得少。
-  //   如果哪天这条自己红了（静止起步也走得一样快），说明上面那条倍率不再有区分度，
-  //   得换一个量法，而不是继续信它。
-  okNeg(nMoved < wMoved * 0.7, '丢掉速度时头三帧明显走得少（上面那条倍率靠这个差异才能红）',
-    `静止起步 ${nMoved.toFixed(1)}px < 带速度的 ${(wMoved * 0.7).toFixed(1)}px`);
+  // ★ 「速度衔接」到底有没有生效，要看**刚松手那一瞬间**：速度必须还是松手速度。
+  //   ⚠ 这里踩过一次坑：最早写的是「比较头三帧走了多远」，参数收紧（响应 0.4→0.26）
+  //   之后两条曲线几乎重合（31.7px vs 28.3px），断言差点变成装饰 ——
+  //   因为落点离得近，弹簧的拉力很快就把初速盖过去了。
+  //   改成**只走一个极小步**（1/240 秒）再比速度，初速还没来得及被抹掉。
+  const g1 = stepGlide(createGlide(plan), 1 / 240);
+  ok(Math.abs(g1.vx - plan.vx) < plan.vx * 0.15,
+    '★ 接速度：一个极小步之后，速度仍然接近松手速度（没有被瞬间抹掉）',
+    `${plan.vx} → ${g1.vx.toFixed(1)}（差 ${(Math.abs(g1.vx - plan.vx) / plan.vx * 100).toFixed(1)}%）`);
+  // ★ 负对照：从静止起步的话，同一个极小步之后速度差得远 —— 上面那条靠这个差异才能红
+  const g1b = stepGlide(createGlide({ ...plan, vx: 0 }), 1 / 240);
+  okNeg(Math.abs(g1b.vx - plan.vx) > plan.vx * 0.15,
+    '丢掉速度的写法，同一极小步之后速度差得远（上面那条断言靠这个差异才能红）',
+    `静止起步 ${g1b.vx.toFixed(1)} vs 松手速度 ${plan.vx}`);
 
   // 位置连续：单帧位移不该超过「当前速度 × dt」太多
   let maxJump = 0;
